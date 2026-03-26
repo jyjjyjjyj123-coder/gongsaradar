@@ -1,0 +1,1762 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>공사레이더 - 전국 건축공사 정보 플랫폼</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+:root {
+  --bg: #0A0E1A;
+  --surface: #111827;
+  --surface2: #1a2235;
+  --surface3: #1f2c40;
+  --accent: #3B82F6;
+  --accent2: #6366F1;
+  --accent-glow: rgba(59,130,246,0.25);
+  --green: #10B981;
+  --amber: #F59E0B;
+  --red: #EF4444;
+  --text: #F1F5F9;
+  --muted: #64748B;
+  --border: rgba(255,255,255,0.08);
+  --card-border: rgba(255,255,255,0.1);
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: 'Pretendard', 'Noto Sans KR', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ─── SIDEBAR ─── */
+.sidebar {
+  position: fixed; left:0; top:0; bottom:0;
+  width: 240px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  z-index: 100;
+  transition: transform .3s;
+}
+.logo {
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.logo-mark {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 18px; font-weight: 700; letter-spacing: -.5px;
+}
+.logo-icon {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+}
+.logo-sub { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+.nav { padding: 12px 10px; flex: 1; overflow-y: auto; }
+.nav-section { margin-bottom: 20px; }
+.nav-label {
+  font-size: 10px; font-weight: 600; letter-spacing: 1px;
+  color: var(--muted); padding: 0 10px; margin-bottom: 6px;
+  text-transform: uppercase;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px; border-radius: var(--radius-sm);
+  font-size: 13.5px; color: var(--muted); cursor: pointer;
+  transition: all .15s; position: relative;
+}
+.nav-item:hover { background: var(--surface2); color: var(--text); }
+.nav-item.active {
+  background: rgba(59,130,246,0.12);
+  color: var(--accent);
+}
+.nav-item.active::before {
+  content: ''; position: absolute; left: 0; top: 20%; bottom: 20%;
+  width: 3px; background: var(--accent); border-radius: 2px;
+}
+.nav-icon { font-size: 15px; width: 18px; text-align: center; }
+.badge {
+  margin-left: auto; background: var(--accent);
+  color: white; font-size: 10px; font-weight: 700;
+  padding: 1px 6px; border-radius: 10px;
+}
+
+.sidebar-footer {
+  padding: 14px 10px;
+  border-top: 1px solid var(--border);
+}
+.user-card {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px; border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.user-card:hover { background: var(--surface2); }
+.avatar {
+  width: 32px; height: 32px; border-radius: 50%;
+  background: linear-gradient(135deg,#3B82F6,#8B5CF6);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: white;
+  flex-shrink: 0;
+}
+.user-info .name { font-size: 13px; font-weight: 600; }
+.user-info .plan {
+  font-size: 11px; color: var(--amber);
+  display: flex; align-items: center; gap: 3px;
+}
+
+/* ─── MAIN ─── */
+.main {
+  margin-left: 240px;
+  min-height: 100vh;
+  display: flex; flex-direction: column;
+}
+.topbar {
+  position: sticky; top: 0; z-index: 50;
+  background: rgba(10,14,26,0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  height: 56px;
+  display: flex; align-items: center; gap: 16px;
+}
+.search-wrap {
+  flex: 1; max-width: 480px;
+  position: relative;
+}
+.search-wrap input {
+  width: 100%; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 12px 8px 36px;
+  color: var(--text); font-size: 13.5px; outline: none;
+  font-family: inherit;
+}
+.search-wrap input:focus { border-color: var(--accent); }
+.search-icon {
+  position: absolute; left: 10px; top: 50%;
+  transform: translateY(-50%); color: var(--muted); font-size: 14px;
+}
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.btn {
+  padding: 7px 14px; border-radius: var(--radius-sm);
+  font-size: 13px; font-weight: 500; cursor: pointer;
+  border: none; font-family: inherit; transition: all .15s;
+}
+.btn-ghost {
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--border);
+}
+.btn-ghost:hover { background: var(--surface); color: var(--text); }
+.btn-primary {
+  background: var(--accent); color: white;
+}
+.btn-primary:hover { background: #2563EB; }
+.notif-btn {
+  width: 34px; height: 34px; border-radius: var(--radius-sm);
+  background: var(--surface); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; position: relative; font-size: 14px;
+}
+.notif-dot {
+  position: absolute; top: 6px; right: 6px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--red); border: 1.5px solid var(--bg);
+}
+
+/* ─── CONTENT ─── */
+.content { padding: 24px; flex: 1; }
+
+/* ─── PAGE: DASHBOARD ─── */
+.page { display: none; }
+.page.active { display: block; }
+
+.page-title { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+.page-sub { font-size: 13px; color: var(--muted); margin-bottom: 24px; }
+
+.stats-grid {
+  display: grid; grid-template-columns: repeat(4,1fr); gap: 14px;
+  margin-bottom: 24px;
+}
+.stat-card {
+  background: var(--surface); border: 1px solid var(--card-border);
+  border-radius: var(--radius); padding: 16px 18px;
+  position: relative; overflow: hidden;
+}
+.stat-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0;
+  height: 2px; background: var(--c, var(--accent));
+}
+.stat-label { font-size: 11.5px; color: var(--muted); margin-bottom: 8px; }
+.stat-val { font-size: 26px; font-weight: 700; line-height: 1; }
+.stat-change {
+  font-size: 12px; margin-top: 6px;
+  display: flex; align-items: center; gap: 4px;
+}
+.stat-change.up { color: var(--green); }
+.stat-change.down { color: var(--red); }
+
+.two-col { display: grid; grid-template-columns: 1fr 340px; gap: 16px; margin-bottom: 20px; }
+
+/* ─── MAP ─── */
+.map-card {
+  background: var(--surface); border: 1px solid var(--card-border);
+  border-radius: var(--radius); overflow: hidden;
+}
+.map-wrap { position: relative; }
+.card-header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px;
+}
+.card-title { font-size: 14px; font-weight: 600; }
+.card-sub { font-size: 12px; color: var(--muted); margin-left: auto; }
+#map { height: 380px; }
+
+/* filter bar */
+.filter-bar {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.filter-chip {
+  padding: 4px 10px; border-radius: 20px;
+  font-size: 12px; cursor: pointer;
+  border: 1px solid var(--border);
+  background: transparent; color: var(--muted);
+  font-family: inherit; transition: all .15s;
+}
+.filter-chip.on {
+  background: rgba(59,130,246,0.15);
+  border-color: rgba(59,130,246,0.4);
+  color: var(--accent);
+}
+.filter-chip:hover:not(.on) { border-color: var(--accent); color: var(--text); }
+
+/* ─── SITE LIST ─── */
+.site-list { display: flex; flex-direction: column; gap: 0; }
+.site-item {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer; transition: background .12s;
+  display: flex; align-items: flex-start; gap: 10px;
+}
+.site-item:last-child { border-bottom: none; }
+.site-item:hover { background: var(--surface2); }
+.site-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  flex-shrink: 0; margin-top: 5px;
+}
+.site-info .name { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+.site-info .meta { font-size: 11.5px; color: var(--muted); }
+.site-info .tags { display: flex; gap: 5px; margin-top: 5px; flex-wrap: wrap; }
+.tag {
+  font-size: 10.5px; padding: 2px 7px; border-radius: 4px;
+  font-weight: 500;
+}
+.tag-blue { background: rgba(59,130,246,0.15); color: #60A5FA; }
+.tag-green { background: rgba(16,185,129,0.15); color: #34D399; }
+.tag-amber { background: rgba(245,158,11,0.15); color: #FCD34D; }
+.tag-red { background: rgba(239,68,68,0.15); color: #FCA5A5; }
+.tag-purple { background: rgba(139,92,246,0.15); color: #A78BFA; }
+.site-progress { margin-left: auto; text-align: right; flex-shrink: 0; }
+.progress-ring { width: 38px; height: 38px; }
+.progress-ring-bg { fill: none; stroke: var(--surface3); stroke-width: 3; }
+.progress-ring-fill { fill: none; stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset .4s; }
+
+/* ─── PAGE: SEARCH ─── */
+.search-page-wrap { display: grid; grid-template-columns: 280px 1fr; gap: 16px; }
+.filter-panel {
+  background: var(--surface); border: 1px solid var(--card-border);
+  border-radius: var(--radius); padding: 16px; height: fit-content;
+}
+.filter-section { margin-bottom: 20px; }
+.filter-title { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 10px; text-transform: uppercase; letter-spacing: .5px; }
+.checkbox-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 0; cursor: pointer; font-size: 13px;
+}
+.checkbox-row input { accent-color: var(--accent); width: 14px; height: 14px; }
+.range-row { margin-top: 6px; }
+.range-row input[type=range] { width: 100%; accent-color: var(--accent); }
+.range-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+.results-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(280px,1fr)); gap: 14px; }
+.result-card {
+  background: var(--surface); border: 1px solid var(--card-border);
+  border-radius: var(--radius); overflow: hidden; cursor: pointer;
+  transition: border-color .15s, transform .15s;
+}
+.result-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.result-img {
+  height: 120px;
+  background: var(--surface3);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 36px; position: relative;
+}
+.result-badge {
+  position: absolute; top: 8px; right: 8px;
+  font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 20px;
+}
+.result-body { padding: 14px; }
+.result-name { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.result-addr { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.result-stats {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 8px; margin-top: 10px;
+  padding-top: 10px; border-top: 1px solid var(--border);
+}
+.result-stat-label { font-size: 11px; color: var(--muted); }
+.result-stat-val { font-size: 13px; font-weight: 600; margin-top: 2px; }
+
+/* ─── PAGE: FAVORITES ─── */
+.fav-table {
+  width: 100%; border-collapse: collapse;
+  background: var(--surface); border-radius: var(--radius);
+  overflow: hidden;
+}
+.fav-table th {
+  padding: 10px 16px; text-align: left;
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase; letter-spacing: .5px;
+}
+.fav-table td {
+  padding: 12px 16px; font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.fav-table tr:last-child td { border-bottom: none; }
+.fav-table tbody tr:hover td { background: var(--surface2); }
+.memo-btn {
+  padding: 4px 10px; border-radius: 6px;
+  font-size: 12px; cursor: pointer;
+  background: var(--surface2); color: var(--muted);
+  border: 1px solid var(--border); font-family: inherit;
+}
+.memo-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ─── PAGE: SUBSCRIPTION ─── */
+.plan-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; max-width: 900px; }
+.plan-card {
+  background: var(--surface); border: 1px solid var(--card-border);
+  border-radius: var(--radius); padding: 24px; position: relative;
+  transition: border-color .15s;
+}
+.plan-card:hover { border-color: var(--accent); }
+.plan-card.popular {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, rgba(59,130,246,0.06) 0%, var(--surface) 100%);
+}
+.popular-badge {
+  position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+  background: var(--accent); color: white;
+  font-size: 11px; font-weight: 700; padding: 3px 14px; border-radius: 20px;
+  white-space: nowrap;
+}
+.plan-name { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+.plan-price { font-size: 28px; font-weight: 700; margin-bottom: 4px; }
+.plan-price span { font-size: 14px; font-weight: 400; color: var(--muted); }
+.plan-desc { font-size: 12.5px; color: var(--muted); margin-bottom: 18px; line-height: 1.5; }
+.plan-features { list-style: none; display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+.plan-features li { font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.check { color: var(--green); font-size: 14px; }
+.cross { color: var(--muted); font-size: 14px; }
+.btn-plan {
+  width: 100%; padding: 10px; border-radius: var(--radius-sm);
+  font-size: 14px; font-weight: 600; cursor: pointer;
+  font-family: inherit; border: none; transition: all .15s;
+}
+.btn-plan-outline {
+  background: transparent; color: var(--text);
+  border: 1px solid var(--card-border);
+}
+.btn-plan-outline:hover { border-color: var(--accent); color: var(--accent); }
+.btn-plan-filled { background: var(--accent); color: white; }
+.btn-plan-filled:hover { background: #2563EB; }
+
+/* ─── MODAL ─── */
+.modal-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+  z-index: 200; align-items: center; justify-content: center;
+}
+.modal-overlay.open { display: flex; }
+.modal {
+  background: var(--surface); border: 1px solid var(--card-border);
+  border-radius: 16px; width: 90%; max-width: 520px;
+  padding: 24px; position: relative;
+}
+.modal-close {
+  position: absolute; top: 16px; right: 16px;
+  background: none; border: none; color: var(--muted);
+  font-size: 18px; cursor: pointer;
+}
+.modal-title { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+.form-group { margin-bottom: 14px; }
+.form-label { font-size: 12px; color: var(--muted); margin-bottom: 5px; display: block; }
+.form-input {
+  width: 100%; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 9px 12px; color: var(--text); font-size: 13.5px;
+  outline: none; font-family: inherit;
+}
+.form-input:focus { border-color: var(--accent); }
+.form-textarea {
+  width: 100%; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 9px 12px; color: var(--text); font-size: 13.5px;
+  outline: none; font-family: inherit; resize: vertical; min-height: 80px;
+}
+.form-textarea:focus { border-color: var(--accent); }
+
+/* ─── PROGRESS BAR ─── */
+.progress-bar-wrap { display: flex; align-items: center; gap: 10px; }
+.progress-bar {
+  flex: 1; height: 6px; background: var(--surface3);
+  border-radius: 3px; overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  transition: width .4s;
+}
+.progress-text { font-size: 12px; color: var(--muted); min-width: 36px; text-align: right; }
+
+/* ─── TOAST ─── */
+.toast {
+  position: fixed; bottom: 24px; right: 24px;
+  background: var(--surface); border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm); padding: 12px 16px;
+  font-size: 13.5px; display: flex; align-items: center; gap: 10px;
+  z-index: 999; transform: translateY(80px); opacity: 0;
+  transition: all .3s; max-width: 320px; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.toast.show { transform: translateY(0); opacity: 1; }
+.toast-icon { font-size: 16px; }
+
+/* ─── RESPONSIVE ─── */
+@media(max-width:768px){
+  .sidebar { transform: translateX(-240px); }
+  .sidebar.open { transform: none; }
+  .main { margin-left: 0; }
+  .stats-grid { grid-template-columns: 1fr 1fr; }
+  .two-col { grid-template-columns: 1fr; }
+  .plan-grid { grid-template-columns: 1fr; }
+  .search-page-wrap { grid-template-columns: 1fr; }
+}
+
+/* ─── LEAFLET OVERRIDE ─── */
+.leaflet-container { background: #0d1628 !important; }
+.leaflet-tile { filter: brightness(.85) saturate(.8) hue-rotate(10deg); }
+
+/* ─── MY LOCATION BUTTON ─── */
+.locate-btn {
+  position: absolute;
+  bottom: 16px; right: 16px;
+  z-index: 1000;
+  width: 40px; height: 40px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--card-border);
+  color: var(--text);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  transition: all .2s;
+}
+.locate-btn:hover { background: var(--accent); border-color: var(--accent); }
+.locate-btn.active { background: var(--accent); border-color: var(--accent); }
+.locate-btn.loading { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.map-wrap { position: relative; }
+
+/* ─── MY LOCATION PULSE ─── */
+@keyframes loc-pulse {
+  0%   { transform: scale(1);   opacity: .7; }
+  70%  { transform: scale(2.8); opacity: 0;  }
+  100% { transform: scale(1);   opacity: 0;  }
+}
+.my-loc-ring {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: rgba(59,130,246,0.35);
+  animation: loc-pulse 1.8s ease-out infinite;
+}
+.my-loc-dot {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%,-50%);
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #3B82F6;
+  border: 2px solid white;
+  box-shadow: 0 0 8px rgba(59,130,246,0.8);
+}
+
+/* ─── MINI CHART ─── */
+.sparkline { width: 80px; height: 28px; }
+
+/* ─── PROGRESS PAGE ─── */
+.progress-list { display: flex; flex-direction: column; gap: 12px; }
+.progress-item {
+  background: var(--surface); border: 1px solid var(--card-border);
+  border-radius: var(--radius); padding: 16px 18px;
+}
+.progress-item-header {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+}
+.progress-item-name { font-size: 14px; font-weight: 600; flex: 1; }
+.step-dots { display: flex; gap: 6px; margin-top: 12px; }
+.step-dot {
+  height: 4px; border-radius: 2px; flex: 1; background: var(--surface3);
+}
+.step-dot.done { background: var(--accent); }
+.step-dot.active {
+  background: var(--amber);
+  animation: pulse-bar 1.5s ease-in-out infinite;
+}
+@keyframes pulse-bar { 0%,100%{opacity:1} 50%{opacity:.5} }
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<nav class="sidebar" id="sidebar">
+  <div class="logo">
+    <div class="logo-mark">
+      <div class="logo-icon">🏗</div>
+      공사레이더
+    </div>
+    <div class="logo-sub">전국 건축공사 정보 플랫폼</div>
+  </div>
+
+  <div class="nav">
+    <div class="nav-section">
+      <div class="nav-label">메인</div>
+      <div class="nav-item active" data-page="dashboard">
+        <span class="nav-icon">📊</span> 대시보드
+      </div>
+      <div class="nav-item" data-page="map-full">
+        <span class="nav-icon">🗺</span> 지도 보기
+      </div>
+      <div class="nav-item" data-page="search">
+        <span class="nav-icon">🔍</span> 현장 검색
+        <span class="badge">1,248</span>
+      </div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-label">관리</div>
+      <div class="nav-item" data-page="favorites">
+        <span class="nav-icon">⭐</span> 즐겨찾기
+        <span class="badge">12</span>
+      </div>
+      <div class="nav-item" data-page="progress">
+        <span class="nav-icon">📈</span> 공정 추적
+      </div>
+      <div class="nav-item" data-page="memo">
+        <span class="nav-icon">📝</span> 메모 / 일정
+      </div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-label">설정</div>
+      <div class="nav-item" data-page="subscription">
+        <span class="nav-icon">💎</span> 구독 플랜
+      </div>
+      <div class="nav-item" data-page="settings">
+        <span class="nav-icon">⚙️</span> 설정
+      </div>
+    </div>
+  </div>
+
+  <div class="sidebar-footer">
+    <div class="user-card">
+      <div class="avatar">김건</div>
+      <div class="user-info">
+        <div class="name">김건설</div>
+        <div class="plan">⭐ PRO 플랜</div>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- MAIN -->
+<div class="main">
+  <div class="topbar">
+    <div class="search-wrap">
+      <span class="search-icon">🔍</span>
+      <input type="text" placeholder="현장명, 주소, 시공업체 검색…" id="global-search">
+    </div>
+    <div class="topbar-right">
+      <div class="notif-btn" onclick="showToast('🔔 새 알림 3건이 있습니다.')">
+        🔔<div class="notif-dot"></div>
+      </div>
+      <button class="btn btn-ghost" onclick="quickLoad()" id="load-btn">🔄 실제 데이터</button>
+      <button class="btn btn-primary" onclick="openModal('add-site')">+ 현장 추가</button>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- ─── DASHBOARD ─── -->
+    <div class="page active" id="page-dashboard">
+      <div class="page-title">대시보드</div>
+      <div class="page-sub">2025년 3월 기준 · 전국 인허가 데이터 실시간 연동</div>
+
+      <div class="stats-grid">
+        <div class="stat-card" style="--c:#3B82F6">
+          <div class="stat-label">전국 진행 현장</div>
+          <div class="stat-val">48,271</div>
+          <div class="stat-change up">▲ 1,204 이번달 신규</div>
+        </div>
+        <div class="stat-card" style="--c:#10B981">
+          <div class="stat-label">즐겨찾기 현장</div>
+          <div class="stat-val">12</div>
+          <div class="stat-change up">▲ 3 이번주 추가</div>
+        </div>
+        <div class="stat-card" style="--c:#F59E0B">
+          <div class="stat-label">공정률 업데이트</div>
+          <div class="stat-val">7</div>
+          <div class="stat-change up">오늘 업데이트된 현장</div>
+        </div>
+        <div class="stat-card" style="--c:#EF4444">
+          <div class="stat-label">알림 설정 현장</div>
+          <div class="stat-val">5</div>
+          <div class="stat-change down">▼ 1 공사 완료</div>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <!-- MAP -->
+        <div class="map-card">
+          <div class="card-header">
+            <span style="font-size:15px">🗺</span>
+            <span class="card-title">현장 지도</span>
+            <div class="filter-bar" style="padding:0; border:none; margin-left:auto; gap:5px;">
+              <button class="filter-chip on" onclick="toggleChip(this,'all')">전체</button>
+              <button class="filter-chip" onclick="toggleChip(this,'apt')">아파트</button>
+              <button class="filter-chip" onclick="toggleChip(this,'com')">상업</button>
+              <button class="filter-chip" onclick="toggleChip(this,'ind')">산업</button>
+            </div>
+          </div>
+          <div class="map-wrap">
+            <div id="map"></div>
+            <button class="locate-btn" id="locate-btn-dash" onclick="locateMe('dash')" title="내 위치 표시">📍</button>
+          </div>
+        </div>
+
+        <!-- RECENT LIST -->
+        <div class="map-card">
+          <div class="card-header">
+            <span style="font-size:15px">📋</span>
+            <span class="card-title">최근 현장</span>
+            <span class="card-sub">즐겨찾기 기준</span>
+          </div>
+          <div class="site-list" id="site-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── MAP FULL ─── -->
+    <div class="page" id="page-map-full">
+      <div class="page-title">지도 보기</div>
+      <div class="page-sub">마커를 클릭하면 현장 상세 정보가 표시됩니다</div>
+      <div class="map-card">
+        <div class="filter-bar">
+          <span style="font-size:12px;color:var(--muted);margin-right:4px">필터:</span>
+          <button class="filter-chip on">전체</button>
+          <button class="filter-chip">아파트</button>
+          <button class="filter-chip">주거복합</button>
+          <button class="filter-chip">상업시설</button>
+          <button class="filter-chip">오피스</button>
+          <button class="filter-chip">공장/물류</button>
+          <button class="filter-chip">공공시설</button>
+        </div>
+        <div class="map-wrap">
+          <div id="map-full" style="height:calc(100vh - 230px);min-height:400px;"></div>
+          <button class="locate-btn" onclick="locateMe('full')" title="내 위치 표시">📍</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── SEARCH ─── -->
+    <div class="page" id="page-search">
+      <div class="page-title">현장 검색</div>
+      <div class="page-sub">전국 건축인허가 데이터 48,271건 조회 가능</div>
+      <div class="search-page-wrap">
+        <div class="filter-panel">
+          <div class="filter-section">
+            <div class="filter-title">건물 용도</div>
+            <label class="checkbox-row"><input type="checkbox" checked> 아파트</label>
+            <label class="checkbox-row"><input type="checkbox" checked> 주거복합</label>
+            <label class="checkbox-row"><input type="checkbox"> 단독·다세대</label>
+            <label class="checkbox-row"><input type="checkbox" checked> 상업시설</label>
+            <label class="checkbox-row"><input type="checkbox"> 업무시설</label>
+            <label class="checkbox-row"><input type="checkbox"> 공장·물류</label>
+            <label class="checkbox-row"><input type="checkbox"> 공공시설</label>
+          </div>
+          <div class="filter-section">
+            <div class="filter-title">공정 상태</div>
+            <label class="checkbox-row"><input type="checkbox" checked> 인허가완료</label>
+            <label class="checkbox-row"><input type="checkbox" checked> 착공</label>
+            <label class="checkbox-row"><input type="checkbox" checked> 골조공사</label>
+            <label class="checkbox-row"><input type="checkbox"> 내외부마감</label>
+            <label class="checkbox-row"><input type="checkbox"> 준공</label>
+          </div>
+          <div class="filter-section">
+            <div class="filter-title">연면적 (㎡)</div>
+            <div class="range-row">
+              <input type="range" min="0" max="100000" value="50000" id="area-range" oninput="document.getElementById('area-label').textContent=parseInt(this.value).toLocaleString()+'㎡'">
+              <div class="range-labels">
+                <span>0</span>
+                <span id="area-label">50,000㎡</span>
+              </div>
+            </div>
+          </div>
+          <div class="filter-section">
+            <div class="filter-title">지역</div>
+            <select class="form-input" style="padding:7px 10px;font-size:13px">
+              <option>전체 지역</option>
+              <option>서울특별시</option>
+              <option>경기도</option>
+              <option>인천광역시</option>
+              <option>부산광역시</option>
+              <option>대구광역시</option>
+              <option>기타</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" style="width:100%;padding:10px;font-size:14px">🔍 검색 적용</button>
+        </div>
+
+        <div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+            <span style="font-size:13px;color:var(--muted)">총 <strong style="color:var(--text)">1,248</strong>건 검색됨</span>
+            <select class="form-input" style="width:auto;padding:6px 10px;font-size:12px">
+              <option>최신순</option>
+              <option>규모순</option>
+              <option>공정률순</option>
+              <option>거리순</option>
+            </select>
+          </div>
+          <div class="results-grid" id="results-grid"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── FAVORITES ─── -->
+    <div class="page" id="page-favorites">
+      <div class="page-title">즐겨찾기</div>
+      <div class="page-sub">총 12개 현장이 즐겨찾기에 저장되어 있습니다</div>
+      <div style="overflow-x:auto">
+        <table class="fav-table" id="fav-table"></table>
+      </div>
+    </div>
+
+    <!-- ─── PROGRESS ─── -->
+    <div class="page" id="page-progress">
+      <div class="page-title">공정 추적</div>
+      <div class="page-sub">즐겨찾기 현장의 공정 현황을 추적합니다</div>
+      <div class="progress-list" id="progress-list"></div>
+    </div>
+
+    <!-- ─── MEMO ─── -->
+    <div class="page" id="page-memo">
+      <div class="page-title">메모 / 일정</div>
+      <div class="page-sub">현장별 메모와 방문 일정을 관리합니다</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div class="map-card">
+          <div class="card-header">
+            <span>📝</span>
+            <span class="card-title">현장 메모</span>
+            <button class="btn btn-ghost" style="margin-left:auto;padding:5px 10px;font-size:12px" onclick="openModal('add-memo')">+ 추가</button>
+          </div>
+          <div id="memo-list" style="padding:12px;display:flex;flex-direction:column;gap:10px"></div>
+        </div>
+        <div class="map-card">
+          <div class="card-header">
+            <span>📅</span>
+            <span class="card-title">방문 일정</span>
+            <button class="btn btn-ghost" style="margin-left:auto;padding:5px 10px;font-size:12px" onclick="openModal('add-schedule')">+ 추가</button>
+          </div>
+          <div id="schedule-list" style="padding:12px;display:flex;flex-direction:column;gap:10px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── SUBSCRIPTION ─── -->
+    <div class="page" id="page-subscription">
+      <div class="page-title">구독 플랜</div>
+      <div class="page-sub">필요에 맞는 플랜을 선택하세요. 언제든지 변경 가능합니다.</div>
+      <div class="plan-grid">
+        <div class="plan-card">
+          <div class="plan-name">무료</div>
+          <div class="plan-price">₩0<span>/월</span></div>
+          <div class="plan-desc">기본 현장 검색과 지도 기능으로 시작해보세요</div>
+          <ul class="plan-features">
+            <li><span class="check">✓</span> 지도 기반 현장 조회</li>
+            <li><span class="check">✓</span> 기본 검색 (월 30회)</li>
+            <li><span class="check">✓</span> 즐겨찾기 3개</li>
+            <li><span class="cross">✗</span> 공정 추적</li>
+            <li><span class="cross">✗</span> 실시간 알림</li>
+            <li><span class="cross">✗</span> 데이터 내보내기</li>
+          </ul>
+          <button class="btn-plan btn-plan-outline">현재 플랜</button>
+        </div>
+
+        <div class="plan-card popular">
+          <div class="popular-badge">🔥 가장 인기</div>
+          <div class="plan-name">PRO</div>
+          <div class="plan-price">₩29,900<span>/월</span></div>
+          <div class="plan-desc">건설업 영업사원과 소규모 사업자에게 최적화된 플랜</div>
+          <ul class="plan-features">
+            <li><span class="check">✓</span> 지도 기반 현장 조회</li>
+            <li><span class="check">✓</span> 무제한 검색</li>
+            <li><span class="check">✓</span> 즐겨찾기 무제한</li>
+            <li><span class="check">✓</span> 공정 추적</li>
+            <li><span class="check">✓</span> 실시간 푸시 알림</li>
+            <li><span class="check">✓</span> 엑셀 내보내기</li>
+          </ul>
+          <button class="btn-plan btn-plan-filled" onclick="openModal('payment')">지금 시작하기</button>
+        </div>
+
+        <div class="plan-card">
+          <div class="plan-name">기업</div>
+          <div class="plan-price">₩99,000<span>/월</span></div>
+          <div class="plan-desc">팀 단위 사용, API 연동이 필요한 기업 고객을 위한 플랜</div>
+          <ul class="plan-features">
+            <li><span class="check">✓</span> PRO 플랜 모든 기능</li>
+            <li><span class="check">✓</span> 팀원 5명 추가</li>
+            <li><span class="check">✓</span> REST API 제공</li>
+            <li><span class="check">✓</span> 전용 대시보드</li>
+            <li><span class="check">✓</span> 맞춤 알림 설정</li>
+            <li><span class="check">✓</span> 전담 고객지원</li>
+          </ul>
+          <button class="btn-plan btn-plan-outline" onclick="openModal('payment')">도입 문의</button>
+        </div>
+      </div>
+
+      <div style="margin-top:32px;padding:20px;background:var(--surface);border-radius:var(--radius);border:1px solid var(--card-border);max-width:900px">
+        <div style="font-size:14px;font-weight:600;margin-bottom:12px">💳 결제 수단</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <div style="padding:8px 14px;background:var(--surface2);border-radius:8px;font-size:13px;border:1px solid var(--border)">
+            💳 신용/체크카드
+          </div>
+          <div style="padding:8px 14px;background:var(--surface2);border-radius:8px;font-size:13px;border:1px solid var(--border)">
+            🏦 계좌이체
+          </div>
+          <div style="padding:8px 14px;background:var(--surface2);border-radius:8px;font-size:13px;border:1px solid var(--border)">
+            📱 카카오페이
+          </div>
+          <div style="padding:8px 14px;background:var(--surface2);border-radius:8px;font-size:13px;border:1px solid var(--border)">
+            📱 네이버페이
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── SETTINGS ─── -->
+    <div class="page" id="page-settings">
+      <div class="page-title">설정</div>
+      <div class="page-sub">공공데이터 API 키 설정 및 계정 정보를 관리합니다</div>
+
+      <!-- API KEY SETUP BANNER -->
+      <div id="api-banner" style="background:linear-gradient(135deg,rgba(59,130,246,0.12),rgba(99,102,241,0.08));border:1px solid rgba(59,130,246,0.3);border-radius:var(--radius);padding:20px 24px;margin-bottom:24px;max-width:900px">
+        <div style="display:flex;align-items:flex-start;gap:16px">
+          <div style="font-size:28px;line-height:1">🔑</div>
+          <div style="flex:1">
+            <div style="font-size:15px;font-weight:700;margin-bottom:6px">공공데이터포털 API 키가 필요합니다</div>
+            <div style="font-size:13px;color:var(--muted);line-height:1.7;margin-bottom:14px">
+              실제 건축인허가 데이터를 불러오려면 <strong style="color:var(--text)">data.go.kr</strong> 에서 무료 API 키를 발급받아야 합니다.<br>
+              아래 순서대로 진행하면 <strong style="color:var(--accent)">약 5분</strong>이면 완료됩니다.
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+              <div style="background:rgba(255,255,255,0.06);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12.5px;display:flex;align-items:center;gap:8px">
+                <span style="background:var(--accent);color:white;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">1</span>
+                <span><a href="https://www.data.go.kr" target="_blank" style="color:var(--accent);text-decoration:none">data.go.kr</a> 회원가입 · 로그인</span>
+              </div>
+              <div style="background:rgba(255,255,255,0.06);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12.5px;display:flex;align-items:center;gap:8px">
+                <span style="background:var(--accent);color:white;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">2</span>
+                <span><a href="https://www.data.go.kr/data/15044695/openapi.do" target="_blank" style="color:var(--accent);text-decoration:none">건축인허가 API</a> → 활용신청 (즉시 승인)</span>
+              </div>
+              <div style="background:rgba(255,255,255,0.06);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12.5px;display:flex;align-items:center;gap:8px">
+                <span style="background:var(--accent);color:white;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">3</span>
+                <span>마이페이지 → 인증키 복사 → 아래에 입력</span>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <input class="form-input" id="api-key-input" placeholder="발급받은 Decoding 인증키를 입력하세요" style="flex:1;min-width:260px;max-width:460px">
+              <button class="btn btn-primary" style="padding:9px 18px;white-space:nowrap" onclick="saveApiKey()">저장 · 불러오기</button>
+              <button class="btn btn-ghost" style="padding:9px 14px;white-space:nowrap" onclick="diagnosApi()">🔍 진단</button>
+            </div>
+            <div id="api-key-status" style="font-size:12px;margin-top:8px;color:var(--muted);line-height:1.6"></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:900px">
+        <!-- API 연동 현황 -->
+        <div class="map-card">
+          <div class="card-header"><span>🔌</span><span class="card-title">API 연동 현황</span></div>
+          <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;align-items:center;justify-content:space-between;font-size:13px;padding:8px 0;border-bottom:1px solid var(--border)">
+              <span>국토부 건축인허가 API</span>
+              <span id="api-status-badge" style="padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:rgba(245,158,11,0.15);color:#FCD34D">미설정</span>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;font-size:13px;padding:8px 0;border-bottom:1px solid var(--border)">
+              <span>카카오 주소 → 좌표 변환</span>
+              <span style="padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:rgba(16,185,129,0.15);color:#34D399">내장 (무료)</span>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;font-size:13px;padding:8px 0">
+              <span>OpenStreetMap 지도</span>
+              <span style="padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:rgba(16,185,129,0.15);color:#34D399">연결됨</span>
+            </div>
+            <div id="api-last-loaded" style="font-size:11.5px;color:var(--muted);margin-top:4px"></div>
+          </div>
+        </div>
+
+        <!-- 알림 설정 -->
+        <div class="map-card">
+          <div class="card-header"><span>🔔</span><span class="card-title">알림 설정</span></div>
+          <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+            <label style="display:flex;align-items:center;justify-content:space-between;font-size:13px;cursor:pointer">
+              <span>공정률 변경 알림</span>
+              <input type="checkbox" checked style="accent-color:var(--accent);width:16px;height:16px">
+            </label>
+            <label style="display:flex;align-items:center;justify-content:space-between;font-size:13px;cursor:pointer">
+              <span>신규 현장 알림</span>
+              <input type="checkbox" checked style="accent-color:var(--accent);width:16px;height:16px">
+            </label>
+            <label style="display:flex;align-items:center;justify-content:space-between;font-size:13px;cursor:pointer">
+              <span>준공 완료 알림</span>
+              <input type="checkbox" style="accent-color:var(--accent);width:16px;height:16px">
+            </label>
+            <label style="display:flex;align-items:center;justify-content:space-between;font-size:13px;cursor:pointer">
+              <span>주간 리포트 메일</span>
+              <input type="checkbox" checked style="accent-color:var(--accent);width:16px;height:16px">
+            </label>
+          </div>
+        </div>
+
+        <!-- 계정 정보 -->
+        <div class="map-card">
+          <div class="card-header"><span>👤</span><span class="card-title">계정 정보</span></div>
+          <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+            <div class="form-group" style="margin:0">
+              <label class="form-label">이름</label>
+              <input class="form-input" value="김건설">
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">이메일</label>
+              <input class="form-input" value="kim@example.com">
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">회사명</label>
+              <input class="form-input" value="(주)건설자재">
+            </div>
+            <button class="btn btn-primary" style="width:100%;padding:9px" onclick="showToast('✅ 저장되었습니다.')">저장</button>
+          </div>
+        </div>
+
+        <!-- 검색 조건 프리셋 -->
+        <div class="map-card">
+          <div class="card-header"><span>⚙️</span><span class="card-title">기본 검색 조건</span></div>
+          <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+            <div class="form-group" style="margin:0">
+              <label class="form-label">기본 조회 지역</label>
+              <select class="form-input" id="default-region">
+                <option value="11">서울특별시</option>
+                <option value="41">경기도</option>
+                <option value="28">인천광역시</option>
+                <option value="26">부산광역시</option>
+                <option value="27">대구광역시</option>
+                <option value="">전국</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">1회 최대 조회 건수</label>
+              <select class="form-input" id="default-rows">
+                <option value="20">20건</option>
+                <option value="50" selected>50건</option>
+                <option value="100">100건</option>
+              </select>
+            </div>
+            <button class="btn btn-primary" style="width:100%;padding:9px" onclick="showToast('✅ 기본 설정이 저장되었습니다.')">저장</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /main -->
+
+<!-- ─── MODALS ─── -->
+<div class="modal-overlay" id="modal-add-site">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('add-site')">✕</button>
+    <div class="modal-title">📍 현장 추가</div>
+    <div class="form-group">
+      <label class="form-label">현장명</label>
+      <input class="form-input" placeholder="예: 강남구 OO 아파트 신축공사">
+    </div>
+    <div class="form-group">
+      <label class="form-label">주소</label>
+      <input class="form-input" placeholder="도로명 주소 입력">
+    </div>
+    <div class="form-group">
+      <label class="form-label">건물 용도</label>
+      <select class="form-input">
+        <option>아파트</option><option>주거복합</option>
+        <option>상업시설</option><option>업무시설</option>
+        <option>공장·물류</option>
+      </select>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group">
+        <label class="form-label">연면적 (㎡)</label>
+        <input class="form-input" type="number" placeholder="0">
+      </div>
+      <div class="form-group">
+        <label class="form-label">층수</label>
+        <input class="form-input" type="number" placeholder="0">
+      </div>
+    </div>
+    <button class="btn btn-primary" style="width:100%;padding:10px;font-size:14px" onclick="closeModal('add-site');showToast('✅ 현장이 추가되었습니다.')">추가하기</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-payment">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('payment')">✕</button>
+    <div class="modal-title">💳 PRO 플랜 결제</div>
+    <div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.2);border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:13px">
+      <div style="font-weight:600;margin-bottom:4px">PRO 플랜 · ₩29,900 / 월</div>
+      <div style="color:var(--muted)">무제한 검색, 공정 추적, 실시간 알림 포함</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">카드 번호</label>
+      <input class="form-input" placeholder="0000 - 0000 - 0000 - 0000">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group">
+        <label class="form-label">유효기간</label>
+        <input class="form-input" placeholder="MM / YY">
+      </div>
+      <div class="form-group">
+        <label class="form-label">CVC</label>
+        <input class="form-input" placeholder="000">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">카드 소유자 이름</label>
+      <input class="form-input" placeholder="이름 입력">
+    </div>
+    <button class="btn btn-primary" style="width:100%;padding:11px;font-size:14px;font-weight:700" onclick="closeModal('payment');showToast('🎉 PRO 플랜 결제가 완료되었습니다!')">₩29,900 결제하기</button>
+    <p style="text-align:center;font-size:11px;color:var(--muted);margin-top:12px">30일 이내 취소 시 전액 환불 · 매월 자동 결제</p>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-add-memo">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('add-memo')">✕</button>
+    <div class="modal-title">📝 메모 추가</div>
+    <div class="form-group">
+      <label class="form-label">현장 선택</label>
+      <select class="form-input">
+        <option>강남구 삼성동 오피스 신축</option>
+        <option>마포구 공덕동 주거복합</option>
+        <option>수원시 권선구 물류센터</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">메모 내용</label>
+      <textarea class="form-textarea" placeholder="현장 방문 내용, 담당자 정보 등을 기록하세요…"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:4px">
+      <label style="font-size:12px;display:flex;align-items:center;gap:4px;color:var(--muted);cursor:pointer">
+        <input type="radio" name="memo-type" checked> 공개 메모
+      </label>
+      <label style="font-size:12px;display:flex;align-items:center;gap:4px;color:var(--muted);cursor:pointer">
+        <input type="radio" name="memo-type"> 비공개 메모
+      </label>
+    </div>
+    <button class="btn btn-primary" style="width:100%;padding:10px;font-size:14px;margin-top:14px" onclick="closeModal('add-memo');showToast('✅ 메모가 저장되었습니다.')">저장</button>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast">
+  <span class="toast-icon" id="toast-icon">✅</span>
+  <span id="toast-msg">저장되었습니다.</span>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  공사레이더 — 실제 공공데이터 API 연동 레이어
+//  API: 국토교통부 건축인허가정보 (data.go.kr)
+//  주소→좌표: 카카오 로컬 API (또는 Nominatim 무료)
+// ═══════════════════════════════════════════════════════
+
+// ─── API 설정 ───
+let SERVICE_KEY = localStorage.getItem('gongsaradar_api_key') || '';
+// 로컬 프록시 서버 (node server.js 실행 시 자동 사용)
+const LOCAL_SERVER = 'http://localhost:3001';
+// 외부 CORS 프록시 후보
+const CORS_PROXIES = [
+  (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+  (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+];
+
+// 로컬 서버 가동 여부 체크
+let _localServerOk = null;
+async function checkLocalServer() {
+  if (_localServerOk !== null) return _localServerOk;
+  try {
+    const r = await fetch(LOCAL_SERVER + '/api/building?serviceKey=test&sigunguCd=11680&numOfRows=1',
+      { signal: AbortSignal.timeout(1500) });
+    _localServerOk = r.ok || r.status === 400; // 400도 서버가 살아있다는 뜻
+    return _localServerOk;
+  } catch(e) { _localServerOk = false; return false; }
+}
+
+// 통합 fetch: 로컬서버 → 외부프록시 순서
+async function fetchWithProxy(targetUrl) {
+  // ① 로컬 서버 시도
+  if (await checkLocalServer()) {
+    try {
+      const u = new URL(targetUrl);
+      const params = Object.fromEntries(u.searchParams);
+      const localUrl = `${LOCAL_SERVER}/api/building?` + new URLSearchParams(params);
+      const r = await fetch(localUrl, { signal: AbortSignal.timeout(10000) });
+      const text = await r.text();
+      if (text && text.length > 10) {
+        const json = JSON.parse(text);
+        if (json && !json.error) return json;
+      }
+    } catch(e) { console.warn('[로컬서버 실패]', e.message); }
+  }
+
+  // ② 외부 CORS 프록시 순차 시도
+  let lastErr;
+  for (const proxyFn of CORS_PROXIES) {
+    try {
+      const pUrl = proxyFn(targetUrl);
+      const r = await fetch(pUrl, { signal: AbortSignal.timeout(12000) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const text = await r.text();
+      if (!text || text.length < 10) throw new Error('빈 응답');
+      // XML 오류 응답 감지
+      if (text.trim().startsWith('<')) {
+        const errMatch = text.match(/<returnReasonCode>(\d+)<\/returnReasonCode>/);
+        const codeNum = errMatch ? errMatch[1] : '?';
+        const msgs = {'30':'서비스키 오류 — 해당 API 활용신청 확인','22':'일일 트래픽 초과','12':'해당 OpenAPI 서비스 없음','20':'서비스 접근 거부'};
+        throw new Error(`API 오류 [${codeNum}]: ${msgs[codeNum] || 'XML 오류 응답'}`);
+      }
+      let parsed;
+      try { parsed = JSON.parse(text); } catch(e) { throw new Error('JSON 파싱 실패'); }
+      if (parsed?.contents) {
+        try { return JSON.parse(parsed.contents); } catch(e) { throw new Error('중첩 JSON 실패'); }
+      }
+      return parsed;
+    } catch(e) {
+      lastErr = e;
+      console.warn('[외부프록시 실패]', e.message);
+    }
+  }
+  throw new Error('API 연결 실패: ' + (lastErr?.message || '알 수 없는 오류') + ' \n\n💡 해결: server.js를 로컬에서 실행하면 안정적으로 작동합니다.');
+}
+
+
+// ─── 더미 데이터 (API 키 미설정 시 사용) ───
+const DUMMY_SITES = [
+  { id:1, name:'강남구 삼성동 업무시설 신축', addr:'서울특별시 강남구 삼성동', type:'업무시설', status:'골조공사', progress:62, lat:37.5172, lng:127.0473, color:'#3B82F6', area:'15420', floors:'28',허가일:'2024.08.12', 착공일:'2024.11.03' },
+  { id:2, name:'마포구 공덕동 주거복합 신축', addr:'서울특별시 마포구 공덕동', type:'주거복합', status:'착공', progress:28, lat:37.5478, lng:126.9497, color:'#10B981', area:'32800', floors:'45', 허가일:'2024.06.20', 착공일:'2025.01.15' },
+  { id:3, name:'수원시 권선구 물류센터 신축', addr:'경기도 수원시 권선구 고색동', type:'공장·물류', status:'내외부마감', progress:85, lat:37.2613, lng:126.9991, color:'#F59E0B', area:'8950', floors:'4', 허가일:'2023.12.05', 착공일:'2024.03.22' },
+  { id:4, name:'인천 연수구 아파트 신축', addr:'인천광역시 연수구 송도동', type:'공동주택', status:'인허가완료', progress:8, lat:37.3897, lng:126.6558, color:'#8B5CF6', area:'74200', floors:'49', 허가일:'2025.01.10', 착공일:'-' },
+  { id:5, name:'해운대구 중동 숙박시설 증축', addr:'부산광역시 해운대구 중동', type:'숙박시설', status:'착공', progress:35, lat:35.1631, lng:129.1636, color:'#EF4444', area:'6300', floors:'22', 허가일:'2024.09.18', 착공일:'2025.02.01' },
+  { id:6, name:'성남시 분당구 연구소 신축', addr:'경기도 성남시 분당구 삼평동', type:'연구소', status:'골조공사', progress:55, lat:37.3947, lng:127.1112, color:'#06B6D4', area:'21500', floors:'15', 허가일:'2024.05.30', 착공일:'2024.09.10' },
+  { id:7, name:'대구 수성구 오피스텔 신축', addr:'대구광역시 수성구 범어동', type:'업무시설', status:'착공', progress:22, lat:35.8590, lng:128.6310, color:'#F97316', area:'9800', floors:'31', 허가일:'2024.11.02', 착공일:'2025.02.20' },
+  { id:8, name:'광주 서구 공동주택 신축', addr:'광주광역시 서구 치평동', type:'공동주택', status:'골조공사', progress:47, lat:35.1522, lng:126.8523, color:'#EC4899', area:'38600', floors:'35', 허가일:'2024.04.15', 착공일:'2024.08.05' },
+  { id:9, name:'대전 유성구 연구시설 신축', addr:'대전광역시 유성구 어은동', type:'연구소', status:'인허가완료', progress:12, lat:36.3700, lng:127.3660, color:'#14B8A6', area:'12300', floors:'8', 허가일:'2025.02.14', 착공일:'-' },
+  { id:10, name:'세종시 행정중심복합도시 청사', addr:'세종특별자치시 어진동', type:'공공업무시설', status:'내외부마감', progress:78, lat:36.4801, lng:127.2890, color:'#84CC16', area:'44100', floors:'12', 허가일:'2023.10.20', 착공일:'2024.02.15' },
+  { id:11, name:'울산 남구 공장 신축', addr:'울산광역시 남구 여천동', type:'공장·물류', status:'착공', progress:31, lat:35.5368, lng:129.3114, color:'#A855F7', area:'5600', floors:'3', 허가일:'2024.12.08', 착공일:'2025.03.01' },
+  { id:12, name:'제주 제주시 숙박시설 신축', addr:'제주특별자치도 제주시 노형동', type:'숙박시설', status:'골조공사', progress:60, lat:33.4890, lng:126.4983, color:'#FB923C', area:'7200', floors:'18', 허가일:'2024.07.22', 착공일:'2024.11.18' },
+];
+
+let sites = [...DUMMY_SITES];
+let apiLoaded = false;
+
+const memos = [
+  { site:'강남구 삼성동 업무시설', content:'담당자 이재원 과장 010-XXXX, 골조 완료 후 내장재 영업 기회', date:'2025.03.18' },
+  { site:'마포구 공덕동 주거복합', content:'착공신고 완료, 3월 말 기초공사 시작 예정. 콘크리트 업체 미정', date:'2025.03.15' },
+  { site:'인천 연수구 아파트', content:'시공사 대형 컨소시엄. 마감재 사양 미확정 상태', date:'2025.03.10' },
+];
+
+const schedules = [
+  { site:'강남구 삼성동 업무시설', date:'2025.03.25', time:'14:00', type:'현장방문' },
+  { site:'수원시 권선구 물류센터', date:'2025.03.27', time:'10:30', type:'견적제출' },
+  { site:'성남시 분당구 연구소', date:'2025.04.02', time:'15:00', type:'미팅' },
+];
+
+// ─── 공정 추정 함수 ───
+function estimateProgress(허가일, 착공일, 사용승인일) {
+  const now = new Date();
+  if (사용승인일 && 사용승인일 !== '-') return { pct:100, status:'준공' };
+  if (!착공일 || 착공일 === '-') return { pct:5, status:'인허가완료' };
+  const start = new Date(착공일.replace(/\./g,'-'));
+  const months = (now - start) / (1000*60*60*24*30);
+  if (months < 0) return { pct:5, status:'인허가완료' };
+  if (months < 3)  return { pct:Math.round(5  + months*3),  status:'착공' };
+  if (months < 8)  return { pct:Math.round(15 + months*4),  status:'기초공사' };
+  if (months < 18) return { pct:Math.round(35 + months*2.5),status:'골조공사' };
+  if (months < 28) return { pct:Math.round(65 + months*1.2),status:'내외부마감' };
+  return { pct: Math.min(95, Math.round(80 + months*0.5)), status:'내외부마감' };
+}
+
+// ─── 좌표 변환 (Nominatim 무료) ───
+async function geocodeAddress(addr) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(addr+' 대한민국')}&format=json&limit=1`;
+    const r = await fetch(url, { headers:{ 'Accept-Language':'ko' } });
+    const d = await r.json();
+    if (d && d[0]) return { lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) };
+  } catch(e) {}
+  return null;
+}
+
+// ─── 공공데이터 API 호출 ───
+async function fetchRealData(sigunguCd = '11000') {
+  if (!SERVICE_KEY) {
+    showToast('⚠️ API 키를 먼저 설정 페이지에서 입력해주세요.');
+    return;
+  }
+  updateApiStatus('loading');
+  showToast('⏳ 건축인허가 데이터를 불러오는 중…');
+
+  // sigunguCd: 시도코드 2자리 → 5자리 시군구코드로 매핑
+  const regionMap = {
+    '11':'11680', // 서울 강남구
+    '41':'41135', // 경기 성남 분당구
+    '28':'28110', // 인천 중구
+    '26':'26110', // 부산 중구
+    '27':'27110', // 대구 중구
+    '':  '11680'  // 기본값: 서울 강남구
+  };
+  const code = regionMap[sigunguCd] || sigunguCd;
+  const numOfRows = document.getElementById('default-rows')?.value || '50';
+  const targetUrl = `http://localhost:3001/api/building?serviceKey=${SERVICE_KEY}&sigunguCd=${code}&numOfRows=${numOfRows}&pageNo=1`;
+
+  try {
+    const statusEl = document.getElementById('api-key-status');
+    if(statusEl) statusEl.textContent = '🔄 데이터 불러오는 중…';
+
+    const r = await fetch(targetUrl, { signal: AbortSignal.timeout(15000) });
+    const json = await r.json();
+    if (json.error) throw new Error(json.error);
+
+    // 응답 구조 검사 (정상 / 에러코드 처리)
+    // API 응답 구조: {header:{resultCode,resultMsg}, body:{items:{item:[...]}}}
+    const header = json?.response?.header || json?.header;
+    const body   = json?.response?.body   || json?.body;
+    const resultCode = header?.resultCode;
+
+    if (resultCode && resultCode !== '00') {
+      const msg = header?.resultMsg || '알 수 없는 오류';
+      throw new Error('API 오류 [' + resultCode + ']: ' + msg);
+    }
+
+    const items = body?.items?.item;
+    if (!items) {
+      showToast('ℹ️ 해당 지역에 조회된 현장이 없습니다. 지역을 변경해보세요.');
+      updateApiStatus('ok', 0);
+      return;
+    }
+
+    const list = Array.isArray(items) ? items : [items];
+    const colors = ['#3B82F6','#10B981','#F59E0B','#8B5CF6','#EF4444','#06B6D4','#F97316','#EC4899','#14B8A6','#84CC16'];
+
+    const parsed = list.map((item, i) => {
+      const addr = item.platPlc || item.newPlatPlc || '주소 미상';
+      const 허가Ymd = item.archPermYmd || item.rcvYmd || '';
+      const 착공Ymd = item.stcnsSchdlCnfYmd || item.realStcnsYmd || '';
+      const { pct, status } = estimateProgress(허가Ymd, 착공Ymd, item.useAprDay);
+      const name = item.bldNm
+        ? item.bldNm
+        : `${addr.split(' ').slice(0,3).join(' ')} ${item.mainPurpsCdNm||'건축물'}`;
+      return {
+        id: i+1,
+        name,
+        addr,
+        type: item.mainPurpsCdNm || '기타',
+        status,
+        progress: pct,
+        lat: null, lng: null,
+        color: colors[i % colors.length],
+        area: item.totArea ? Math.round(parseFloat(item.totArea)).toLocaleString() : '-',
+        floors: item.grndFlrCnt || '-',
+        허가일: 허가Ymd ? 허가Ymd.replace(/(\d{4})(\d{2})(\d{2})/, '$1.$2.$3') : '-',
+        착공일: 착공Ymd ? 착공Ymd.replace(/(\d{4})(\d{2})(\d{2})/, '$1.$2.$3') : '-',
+        tags: [item.mainPurpsCdNm||'건축물', item.grndFlrCnt ? `지상${item.grndFlrCnt}층` : ''].filter(Boolean)
+      };
+    });
+
+    // 좌표 변환 (처음 20개, Nominatim 무료 rate limit 준수)
+    showToast(`📍 ${parsed.length}건 로드 완료 · 좌표 변환 중…`);
+    if(statusEl) statusEl.textContent = `🔄 ${parsed.length}건 수신 · 좌표 변환 중 (약 ${Math.ceil(parsed.length*0.3)}초)…`;
+    for (let i = 0; i < Math.min(parsed.length, 20); i++) {
+      const geo = await geocodeAddress(parsed[i].addr);
+      if (geo) { parsed[i].lat = geo.lat; parsed[i].lng = geo.lng; }
+      await new Promise(r => setTimeout(r, 350));
+    }
+
+    const withCoords = parsed.filter(s => s.lat && s.lng);
+    // 좌표 없는 항목도 목록엔 포함 (지도 마커 제외)
+    sites = parsed;
+    apiLoaded = true;
+    updateApiStatus('ok', parsed.length);
+    renderAll();
+    showToast(`✅ 실제 데이터 ${parsed.length}건 로드 · 지도 마커 ${withCoords.length}개 표시`);
+
+  } catch(err) {
+    updateApiStatus('error');
+    const statusEl = document.getElementById('api-key-status');
+    if(statusEl) statusEl.textContent = '❌ ' + err.message;
+    showToast('❌ ' + err.message);
+    console.error('[공사레이더 API 오류]', err);
+    sites = [...DUMMY_SITES];
+    renderAll();
+  }
+}
+
+// ─── API 키 저장 ───
+function saveApiKey() {
+  const raw = document.getElementById('api-key-input').value.trim();
+  // 마스킹된 기존 키 입력 방지
+  if (!raw || raw.includes('•')) {
+    // 기존 저장 키로 재시도
+    if (SERVICE_KEY) {
+      const region = document.getElementById('default-region')?.value || '11';
+      fetchRealData(region);
+    } else {
+      showToast('⚠️ API 키를 입력해주세요.');
+    }
+    return;
+  }
+  SERVICE_KEY = raw;
+  localStorage.setItem('gongsaradar_api_key', raw);
+  const region = document.getElementById('default-region')?.value || '11';
+  fetchRealData(region);
+}
+
+// ─── API 진단 함수 ───
+async function diagnosApi() {
+  const keyEl = document.getElementById('api-key-input');
+  const statusEl = document.getElementById('api-key-status');
+  const key = (keyEl?.value || '').replace(/•/g,'').trim() || SERVICE_KEY;
+  if (!key) { showToast('⚠️ API 키를 먼저 입력해주세요.'); return; }
+
+  if (statusEl) statusEl.innerHTML = '🔄 <b>진단 중…</b> (①키 형식 → ②프록시 → ③API 순서로 확인)';
+
+  // ① 키 형식 확인 (보통 영문+숫자 40~100자)
+  if (key.length < 20) {
+    if (statusEl) statusEl.innerHTML = '❌ <b>키가 너무 짧습니다.</b> Decoding 키를 확인해주세요 (보통 40자 이상).';
+    return;
+  }
+  if (statusEl) statusEl.innerHTML += '<br>✅ ① 키 길이 정상 (' + key.length + '자)';
+
+  // ② 프록시 연결 확인
+  const testProxies = [
+    `https://corsproxy.io/?url=${encodeURIComponent('https://httpbin.org/get')}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent('https://httpbin.org/get')}`,
+  ];
+  let proxyOk = false;
+  for (const p of testProxies) {
+    try {
+      const r = await fetch(p, { signal: AbortSignal.timeout(6000) });
+      if (r.ok) { proxyOk = true; break; }
+    } catch(e) {}
+  }
+  if (!proxyOk) {
+    if (statusEl) statusEl.innerHTML += '<br>⚠️ ② 프록시 연결 불안정 — 인터넷 환경을 확인하거나 잠시 후 재시도하세요.';
+  } else {
+    if (statusEl) statusEl.innerHTML += '<br>✅ ② 프록시 연결 정상';
+  }
+
+  // ③ 실제 API 호출 테스트 (로컬 서버 경유)
+  try {
+    const localUrl = `http://localhost:3001/api/building?serviceKey=${key}&sigunguCd=11680&numOfRows=1&pageNo=1`;
+    const r = await fetch(localUrl, { signal: AbortSignal.timeout(10000) });
+    const json = await r.json();
+
+    // 로컬 서버가 error 필드 반환 시
+    if (json.error) {
+      if (statusEl) statusEl.innerHTML += '<br>❌ ③ API 오류: <b>' + json.error + '</b>';
+      return;
+    }
+
+    const _hdr = json?.response?.header || json?.header;
+    const code = _hdr?.resultCode;
+    const msg  = _hdr?.resultMsg || '';
+    if (code === '00') {
+      SERVICE_KEY = key;
+      localStorage.setItem('gongsaradar_api_key', key);
+      if (statusEl) statusEl.innerHTML += '<br>✅ ③ API 인증 성공! 데이터를 불러옵니다…';
+      updateApiStatus('ok');
+      setTimeout(() => fetchRealData('11'), 500);
+    } else if (code === '30') {
+      if (statusEl) statusEl.innerHTML += '<br>❌ ③ [30] 서비스키 오류 — 이 API 활용신청이 완료됐는지 확인하세요.';
+    } else if (code === '22') {
+      if (statusEl) statusEl.innerHTML += '<br>❌ ③ [22] 일일 트래픽 초과 (1만건 한도)';
+    } else {
+      if (statusEl) statusEl.innerHTML += `<br>⚠️ ③ 응답 코드 [${code}]: ${msg}`;
+    }
+  } catch(e) {
+    if (statusEl) statusEl.innerHTML += '<br>❌ ③ 서버 호출 실패: ' + e.message + '<br>💡 CMD에서 node server.js 실행 중인지 확인하세요.';
+  }
+}
+
+// ─── 대시보드 상단 빠른 데이터 로드 버튼용 ───
+function quickLoad() {
+  if (!SERVICE_KEY) {
+    // 설정 페이지로 이동
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.querySelector('[data-page="settings"]').classList.add('active');
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('page-settings').classList.add('active');
+    showToast('⚙️ 설정 탭에서 API 키를 입력해주세요.');
+    return;
+  }
+  fetchRealData('11');
+}
+
+function updateApiStatus(state, count) {
+  const badge = document.getElementById('api-status-badge');
+  const status = document.getElementById('api-key-status');
+  const lastLoaded = document.getElementById('api-last-loaded');
+  if (state === 'ok') {
+    if (badge) { badge.textContent='연결됨'; badge.style.background='rgba(16,185,129,0.15)'; badge.style.color='#34D399'; }
+    if (status) status.textContent = `✅ API 키 저장 완료`;
+    if (lastLoaded) lastLoaded.textContent = `마지막 로드: ${new Date().toLocaleString('ko-KR')} · ${count}건`;
+  } else if (state === 'loading') {
+    if (badge) { badge.textContent='로딩 중…'; badge.style.background='rgba(59,130,246,0.15)'; badge.style.color='#60A5FA'; }
+  } else if (state === 'error') {
+    if (badge) { badge.textContent='오류'; badge.style.background='rgba(239,68,68,0.15)'; badge.style.color='#FCA5A5'; }
+    if (status) status.style.color = 'var(--red)';
+  }
+}
+
+// 저장된 키 복원
+if (SERVICE_KEY && document.getElementById('api-key-input')) {
+  document.getElementById('api-key-input').value = SERVICE_KEY.slice(0,8) + '••••••••';
+  updateApiStatus('ok');
+}
+
+// ─── NAV ───
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    item.classList.add('active');
+    const page = item.dataset.page;
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('page-' + page).classList.add('active');
+    if(page === 'map-full' && !mapFull) initMapFull();
+  });
+});
+
+// ─── MAP ───
+let map, mapFull;
+let myLocLayerDash = null, myLocLayerFull = null;
+let markersLayerDash = null, markersLayerFull = null;
+
+function initMap() {
+  map = L.map('map', { zoomControl:false, attributionControl:false }).setView([36.5,127.8], 7);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+  L.control.zoom({ position:'topright' }).addTo(map);
+  markersLayerDash = L.layerGroup().addTo(map);
+  addMarkers(map, markersLayerDash);
+}
+function initMapFull() {
+  mapFull = L.map('map-full', { zoomControl:true, attributionControl:false }).setView([36.5,127.8], 7);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapFull);
+  markersLayerFull = L.layerGroup().addTo(mapFull);
+  addMarkers(mapFull, markersLayerFull);
+}
+function addMarkers(m, layer) {
+  if (layer) layer.clearLayers();
+  const target = layer || m;
+  sites.filter(s => s.lat && s.lng).forEach(s => {
+    const icon = L.divIcon({
+      className:'',
+      html:`<div title="${s.name}" style="width:14px;height:14px;border-radius:50%;background:${s.color};border:2px solid white;box-shadow:0 0 6px ${s.color}66;cursor:pointer"></div>`,
+      iconSize:[14,14], iconAnchor:[7,7]
+    });
+    L.marker([s.lat, s.lng], { icon }).addTo(target)
+      .bindPopup(`
+        <div style="min-width:180px;font-family:Pretendard,sans-serif">
+          <div style="font-weight:700;font-size:13px;margin-bottom:6px">${s.name}</div>
+          <div style="font-size:12px;color:#666;margin-bottom:4px">📍 ${s.addr}</div>
+          <div style="font-size:12px;margin-bottom:4px">🏗 ${s.type} · ${s.status}</div>
+          <div style="font-size:12px;margin-bottom:6px">📐 연면적 ${s.area}㎡ · 지상 ${s.floors}층</div>
+          <div style="background:#f0f4ff;border-radius:4px;padding:6px 8px;font-size:11.5px">
+            <div>허가일: ${s.허가일}</div>
+            <div>착공일: ${s.착공일}</div>
+          </div>
+          <div style="margin-top:8px;background:#e8f5e9;border-radius:4px;padding:5px 8px">
+            <div style="font-size:11px;color:#555;margin-bottom:3px">공정률 추정</div>
+            <div style="height:6px;background:#ddd;border-radius:3px">
+              <div style="height:100%;width:${s.progress}%;background:#3B82F6;border-radius:3px"></div>
+            </div>
+            <div style="font-size:11px;text-align:right;margin-top:2px;color:#333">${s.progress}%</div>
+          </div>
+        </div>
+      `);
+  });
+}
+
+// ─── GEOLOCATION ───
+function locateMe(target) {
+  const btn = target === 'dash'
+    ? document.getElementById('locate-btn-dash')
+    : document.querySelector('#page-map-full .locate-btn');
+  if (!navigator.geolocation) { showToast('⚠️ 위치 서비스를 지원하지 않는 브라우저입니다.'); return; }
+  if (btn) { btn.textContent = '⏳'; btn.classList.add('loading'); }
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+      const targetMap = target === 'full' ? mapFull : map;
+      if (!targetMap) { if(btn){btn.textContent='📍';btn.classList.remove('loading');}return; }
+      if (target === 'full' && myLocLayerFull) { myLocLayerFull.remove(); myLocLayerFull = null; }
+      if (target !== 'full' && myLocLayerDash) { myLocLayerDash.remove(); myLocLayerDash = null; }
+      const circle = L.circle([lat, lng], { radius: accuracy, color:'#3B82F6', fillColor:'#3B82F6', fillOpacity:0.08, weight:1, dashArray:'4' });
+      const myIcon = L.divIcon({
+        className: '',
+        html: `<div style="position:relative;width:18px;height:18px;display:flex;align-items:center;justify-content:center;">
+          <div style="position:absolute;width:18px;height:18px;border-radius:50%;background:rgba(59,130,246,0.3);animation:loc-pulse 1.8s ease-out infinite;"></div>
+          <div style="position:absolute;width:10px;height:10px;border-radius:50%;background:#3B82F6;border:2px solid white;box-shadow:0 0 8px rgba(59,130,246,0.8);"></div>
+        </div>`,
+        iconSize:[18,18], iconAnchor:[9,9]
+      });
+      const marker = L.marker([lat, lng], { icon: myIcon })
+        .bindPopup(`<b>📍 내 현재 위치</b><br>위도: ${lat.toFixed(5)}<br>경도: ${lng.toFixed(5)}<br>정확도: ±${Math.round(accuracy)}m`)
+        .openPopup();
+      const layer = L.layerGroup([circle, marker]);
+      layer.addTo(targetMap);
+      if (target === 'full') myLocLayerFull = layer;
+      else myLocLayerDash = layer;
+      targetMap.flyTo([lat, lng], 14, { animate:true, duration:1.2 });
+      if (btn) { btn.textContent='📍'; btn.classList.remove('loading'); btn.classList.add('active'); }
+      showToast(`📍 내 위치를 표시했습니다 (정확도 ±${Math.round(accuracy)}m)`);
+    },
+    (err) => {
+      if (btn) { btn.textContent='📍'; btn.classList.remove('loading'); }
+      const msgs = { 1:'위치 권한이 거부되었습니다.', 2:'위치 정보를 가져올 수 없습니다.', 3:'시간이 초과되었습니다.' };
+      showToast('⚠️ ' + (msgs[err.code] || '위치 오류'));
+    },
+    { enableHighAccuracy:true, timeout:10000, maximumAge:0 }
+  );
+}
+initMap();
+
+// ─── RENDER ALL ───
+function renderAll() {
+  renderSiteList();
+  renderResults();
+  renderFavTable();
+  renderProgress();
+  // 지도 마커 갱신
+  if (map && markersLayerDash) addMarkers(map, markersLayerDash);
+  if (mapFull && markersLayerFull) addMarkers(mapFull, markersLayerFull);
+}
+
+const statusColors = { '인허가완료':'tag-purple','착공':'tag-blue','기초공사':'tag-blue','골조공사':'tag-amber','내외부마감':'tag-green','준공':'tag-red' };
+const STATUS_ORDER = ['인허가완료','착공','기초공사','골조공사','내외부마감','준공'];
+
+// ─── SITE LIST (대시보드) ───
+function renderSiteList() {
+  const siteList = document.getElementById('site-list');
+  if(!siteList) return;
+  siteList.innerHTML = '';
+  sites.slice(0,6).forEach(s => {
+    const pct = s.progress;
+    const r = 17, circ = 2*Math.PI*r, offset = circ - (pct/100)*circ;
+    siteList.innerHTML += `
+      <div class="site-item" onclick="showToast('📍 ${s.name}')">
+        <div class="site-dot" style="background:${s.color}"></div>
+        <div class="site-info">
+          <div class="name">${s.name}</div>
+          <div class="meta">${s.addr}</div>
+          <div class="tags">
+            <span class="tag tag-blue">${s.type}</span>
+            <span class="tag tag-amber">${s.status}</span>
+            ${s.floors && s.floors!=='-' ? `<span class="tag tag-green">지상${s.floors}층</span>`:''}
+          </div>
+        </div>
+        <div class="site-progress">
+          <svg class="progress-ring" viewBox="0 0 40 40">
+            <circle class="progress-ring-bg" cx="20" cy="20" r="${r}"/>
+            <circle class="progress-ring-fill" cx="20" cy="20" r="${r}"
+              stroke="${s.color}" stroke-dasharray="${circ}" stroke-dashoffset="${offset}"
+              transform="rotate(-90 20 20)"/>
+            <text x="20" y="24" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="Pretendard,sans-serif">${pct}%</text>
+          </svg>
+        </div>
+      </div>`;
+  });
+  // 통계 카드 업데이트
+  const inProgress = sites.filter(s=>s.status!=='준공').length;
+  document.querySelector('.stat-card:nth-child(1) .stat-val').textContent = inProgress.toLocaleString();
+}
+
+// ─── SEARCH RESULTS ───
+function renderResults() {
+  const grid = document.getElementById('results-grid');
+  if(!grid) return;
+  grid.innerHTML = '';
+  const icons = ['🏢','🏗','🏭','🏠','🏨','🏛','🏬','🏦'];
+  sites.forEach((s,i) => {
+    const ic = icons[i % icons.length];
+    const sc = statusColors[s.status] || 'tag-blue';
+    grid.innerHTML += `
+      <div class="result-card" onclick="showToast('📍 ${s.name} · ${s.status} · ${s.progress}%')">
+        <div class="result-img">${ic}
+          <span class="result-badge ${sc}" style="position:absolute;top:8px;right:8px">${s.status}</span>
+        </div>
+        <div class="result-body">
+          <div class="result-name">${s.name}</div>
+          <div class="result-addr">📍 ${s.addr}</div>
+          <div class="progress-bar-wrap">
+            <div class="progress-bar"><div class="progress-bar-fill" style="width:${s.progress}%"></div></div>
+            <div class="progress-text">${s.progress}%</div>
+          </div>
+          <div class="result-stats">
+            <div><div class="result-stat-label">건물 용도</div><div class="result-stat-val" style="font-size:12px">${s.type}</div></div>
+            <div><div class="result-stat-label">연면적</div><div class="result-stat-val">${s.area}㎡</div></div>
+            <div><div class="result-stat-label">층수</div><div class="result-stat-val">${s.floors}층</div></div>
+            <div><div class="result-stat-label">허가일</div><div class="result-stat-val" style="font-size:11px">${s.허가일}</div></div>
+          </div>
+        </div>
+      </div>`;
+  });
+  document.querySelectorAll('#page-search .page-sub')[0] && (
+    document.querySelector('#page-search .page-sub').textContent =
+      `총 ${sites.length.toLocaleString()}건 · ${apiLoaded?'실제 공공데이터':'데모 데이터 (API 키 설정 필요)'}`
+  );
+}
+
+// ─── FAVORITES TABLE ───
+function renderFavTable() {
+  const favTable = document.getElementById('fav-table');
+  if(!favTable) return;
+  favTable.innerHTML = `<thead><tr>
+    <th>현장명</th><th>주소</th><th>용도</th><th>공정상태</th><th>공정률</th><th>착공일</th><th>메모</th>
+  </tr></thead><tbody>` +
+  sites.map(s => `<tr>
+    <td><strong style="font-size:12.5px">${s.name}</strong></td>
+    <td style="color:var(--muted);font-size:12px">${s.addr}</td>
+    <td><span class="tag tag-blue">${s.type}</span></td>
+    <td><span class="tag ${statusColors[s.status]||'tag-blue'}">${s.status}</span></td>
+    <td>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar" style="min-width:70px"><div class="progress-bar-fill" style="width:${s.progress}%"></div></div>
+        <span class="progress-text">${s.progress}%</span>
+      </div>
+    </td>
+    <td style="font-size:12px;color:var(--muted)">${s.착공일}</td>
+    <td><button class="memo-btn" onclick="openModal('add-memo')">메모</button></td>
+  </tr>`).join('') + '</tbody>';
+}
+
+// ─── PROGRESS ───
+function renderProgress() {
+  const progList = document.getElementById('progress-list');
+  if(!progList) return;
+  progList.innerHTML = '';
+  const steps = STATUS_ORDER;
+  sites.slice(0,8).forEach(s => {
+    const doneIdx = steps.indexOf(s.status);
+    progList.innerHTML += `
+      <div class="progress-item">
+        <div class="progress-item-header">
+          <div class="site-dot" style="background:${s.color};width:10px;height:10px;border-radius:50%"></div>
+          <div class="progress-item-name">${s.name}</div>
+          <span class="tag ${statusColors[s.status]||'tag-blue'}" style="margin-left:auto">${s.status}</span>
+          <strong style="margin-left:12px;font-size:14px">${s.progress}%</strong>
+        </div>
+        <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">허가: ${s.허가일} · 착공: ${s.착공일} · ${s.area}㎡ · 지상${s.floors}층</div>
+        <div class="progress-bar-wrap">
+          <div class="progress-bar"><div class="progress-bar-fill" style="width:${s.progress}%"></div></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:8px">
+          ${steps.map((st,i) => `<span style="font-size:11px;color:${i<doneIdx?'var(--accent)':i===doneIdx?'var(--amber)':'var(--muted)'};font-weight:${i===doneIdx?'600':'400'}">${st}</span>`).join('')}
+        </div>
+        <div class="step-dots">
+          ${steps.map((_,i) => `<div class="step-dot ${i<doneIdx?'done':i===doneIdx?'active':''}"></div>`).join('')}
+        </div>
+      </div>`;
+  });
+}
+
+// ─── MEMO & SCHEDULE ───
+const memoListEl = document.getElementById('memo-list');
+memos.forEach(m => {
+  memoListEl.innerHTML += `
+    <div style="background:var(--surface2);border-radius:8px;padding:12px;border:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:600;color:var(--accent);margin-bottom:5px">📍 ${m.site}</div>
+      <div style="font-size:13px;line-height:1.5">${m.content}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px">${m.date}</div>
+    </div>`;
+});
+const schedListEl = document.getElementById('schedule-list');
+const schedColors = { '현장방문':'#3B82F6','견적제출':'#F59E0B','미팅':'#10B981' };
+schedules.forEach(sc => {
+  schedListEl.innerHTML += `
+    <div style="background:var(--surface2);border-radius:8px;padding:12px;border:1px solid var(--border);display:flex;align-items:center;gap:12px">
+      <div style="background:${schedColors[sc.type]||'var(--accent)'};color:white;border-radius:6px;padding:4px 8px;font-size:11px;font-weight:700;flex-shrink:0">${sc.type}</div>
+      <div>
+        <div style="font-size:13px;font-weight:600">${sc.site}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">📅 ${sc.date} ${sc.time}</div>
+      </div>
+    </div>`;
+});
+
+// ─── MODALS ───
+function openModal(id) { document.getElementById('modal-' + id).classList.add('open'); }
+function closeModal(id) { document.getElementById('modal-' + id).classList.remove('open'); }
+document.querySelectorAll('.modal-overlay').forEach(o => {
+  o.addEventListener('click', e => { if(e.target === o) o.classList.remove('open'); });
+});
+
+// ─── TOAST ───
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  document.getElementById('toast-msg').textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// ─── FILTER CHIPS ───
+function toggleChip(el) {
+  el.parentElement.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('on'));
+  el.classList.add('on');
+}
+
+// ─── 초기 렌더 ───
+renderAll();
+
+// 저장된 키가 있으면 자동으로 데이터 로드
+if (SERVICE_KEY) {
+  setTimeout(() => fetchRealData('11'), 800);
+}
+</script>
+</body>
+</html>

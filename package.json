@@ -1,0 +1,13 @@
+{
+  "name": "gongsaradar-server",
+  "version": "1.0.0",
+  "description": "공사레이더 API 프록시 서버",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2"
+  }
+}

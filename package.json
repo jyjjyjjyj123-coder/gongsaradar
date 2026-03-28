@@ -1,13 +1,16 @@
 {
   "name": "gongsaradar-server",
-  "version": "1.0.0",
-  "description": "공사레이더 API 프록시 서버",
+  "version": "2.0.0",
+  "description": "공사레이더 건설 영업 플랫폼",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "express": "^4.18.2",
     "cors": "^2.8.5",
-    "express": "^4.18.2"
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.0",
+    "better-sqlite3": "^9.4.3"
   }
 }

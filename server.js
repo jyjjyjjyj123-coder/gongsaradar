@@ -84,10 +84,17 @@ db.exec(`
 `);
 
 // 관리자 계정 자동 생성
-if (!db.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL)) {
+// 관리자 계정 항상 upsert (재배포 시에도 비밀번호 환경변수 적용)
+const adminHash = bcrypt.hashSync(ADMIN_PW, 10);
+const existingAdmin = db.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL);
+if (!existingAdmin) {
   db.prepare('INSERT INTO users (email,password,name,company,plan) VALUES (?,?,?,?,?)')
-    .run(ADMIN_EMAIL, bcrypt.hashSync(ADMIN_PW, 10), '관리자', '공사레이더', 'enterprise');
+    .run(ADMIN_EMAIL, adminHash, '관리자', '공사레이더', 'enterprise');
   console.log('👤 관리자 계정 생성:', ADMIN_EMAIL);
+} else {
+  // 재배포 시 비밀번호 동기화
+  db.prepare('UPDATE users SET password=?, plan=? WHERE email=?')
+    .run(adminHash, 'enterprise', ADMIN_EMAIL);
 }
 
 // ── JWT 미들웨어

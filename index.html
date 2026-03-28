@@ -848,6 +848,8 @@ body{font-family:'Pretendard',sans-serif;background:var(--bg);color:var(--text);
         <!-- 상세 정보 -->
         <div style="padding:16px 20px;display:grid;grid-template-columns:1fr 1fr;gap:12px" id="detail-info-grid">
         </div>
+        <!-- 영업 타이밍 배지 -->
+        <div style="margin:0 20px 10px;display:flex;gap:8px;flex-wrap:wrap" id="detail-timing-badges"></div>
         <!-- 추천 자재 + 영업 전략 -->
         <div style="margin:0 20px 14px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);border-radius:10px;padding:13px">
           <div style="font-size:11px;font-weight:700;color:#34D399;margin-bottom:7px">💡 추천 자재 · 영업 전략</div>
@@ -1991,14 +1993,26 @@ function addMarkersToLayer(list, targetMap) {
     kakao.maps.event.addListener(marker, 'click', () => {
       if (!infowindow) return;
       const isFav = favSites.includes(s.id);
-      const iwContent = '<div style="padding:14px;min-width:220px;max-width:280px;font-family:Pretendard,sans-serif;background:white;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.15)">'
-        + '<div style="font-weight:800;font-size:13px;margin-bottom:5px;color:#111">' + s.name + '</div>'
+      const hotStatus = ['골조공사','내외부마감'].includes(s.status);
+      const statusColor = {'내외부마감':'#10B981','골조공사':'#F59E0B','착공':'#3B82F6','기초공사':'#3B82F6','인허가완료':'#8B5CF6','준공':'#EF4444'}[s.status] || '#6B7280';
+      const iwContent = '<div style="padding:16px;min-width:240px;max-width:300px;font-family:Pretendard,sans-serif;background:white;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.18)">'
+        + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
+        + '<div style="width:8px;height:8px;border-radius:50%;background:' + statusColor + ';flex-shrink:0"></div>'
+        + '<div style="font-weight:800;font-size:13.5px;color:#111;flex:1">' + s.name + '</div>'
+        + (hotStatus ? '<span style="background:#FEF2F2;color:#DC2626;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px">🔥 영업적기</span>' : '') + '</div>'
         + '<div style="font-size:11.5px;color:#666;margin-bottom:3px">📍 ' + s.addr + '</div>'
-        + '<div style="font-size:11.5px;color:#444;margin-bottom:6px">🏗 ' + s.type + ' · ' + s.status + '</div>'
-        + '<div style="background:#f0fdf4;border-radius:6px;padding:6px 9px;font-size:11px;color:#166534;margin-bottom:8px">💡 추천: ' + (suggestMaterial[s.status]||'-') + '</div>'
+        + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:8px 0;background:#f9fafb;border-radius:8px;padding:9px">'
+        + '<div><div style="font-size:10px;color:#9CA3AF">용도</div><div style="font-size:12px;font-weight:600;color:#111">' + s.type + '</div></div>'
+        + '<div><div style="font-size:10px;color:#9CA3AF">공정</div><div style="font-size:12px;font-weight:600;color:' + statusColor + '">' + s.status + '</div></div>'
+        + '<div><div style="font-size:10px;color:#9CA3AF">연면적</div><div style="font-size:12px;font-weight:600;color:#111">' + s.area + '㎡</div></div>'
+        + '<div><div style="font-size:10px;color:#9CA3AF">층수</div><div style="font-size:12px;font-weight:600;color:#111">' + (s.floors && s.floors !== '-' ? s.floors + '층' : '-') + '</div></div>'
+        + '<div><div style="font-size:10px;color:#9CA3AF">허가일</div><div style="font-size:11.5px;font-weight:600;color:#111">' + s.허가일 + '</div></div>'
+        + '<div><div style="font-size:10px;color:#9CA3AF">공정률</div><div style="font-size:12px;font-weight:700;color:' + statusColor + '">' + s.progress + '%</div></div>'
+        + '</div>'
+        + '<div style="background:#f0fdf4;border-radius:8px;padding:8px 10px;font-size:11px;color:#166534;margin-bottom:10px">💡 ' + (suggestMaterial[s.status]||'-') + '</div>'
         + '<div style="display:flex;gap:6px">'
-        + '<button onclick="toggleFav(' + s.id + ')" style="flex:1;padding:7px;background:' + (isFav?'#F59E0B':'#f3f4f6') + ';color:' + (isFav?'white':'#374151') + ';border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">' + (isFav?'⭐ 즐겨찾기':'☆ 즐겨찾기') + '</button>'
-        + '<button onclick="openModal(\'add-note\')" style="flex:1;padding:7px;background:#2563EB;color:white;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">📝 노트</button>'
+        + '<button onclick="openSiteDetail(' + s.id + ')" style="flex:2;padding:8px;background:#2563EB;color:white;border:none;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer">🔍 상세보기</button>'
+        + '<button onclick="toggleFav(' + s.id + ')" style="flex:1;padding:8px;background:' + (isFav?'#F59E0B':'#f3f4f6') + ';color:' + (isFav?'white':'#374151') + ';border:none;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer">' + (isFav?'⭐':'☆') + '</button>'
         + '</div></div>';
       infowindow.setContent(iwContent);
       infowindow.setPosition(new kakao.maps.LatLng(s.lat, s.lng));
@@ -2204,8 +2218,18 @@ function parseRawItems(rawItems) {
         color: colors[validIdx % colors.length],
         area: areaNum >= 1 ? Math.round(areaNum).toLocaleString() : '-',
         floors: item.grndFlrCnt || '-',
+        underFloors: item.ugrndFlrCnt || '-',
         허가일: archYmd ? archYmd.replace(/(\d{4})(\d{2})(\d{2})/, '$1.$2.$3') : '-',
         착공일: stcnsYmd ? stcnsYmd.replace(/(\d{4})(\d{2})(\d{2})/, '$1.$2.$3') : '-',
+        준공예정일: item.useAprDay ? item.useAprDay.replace(/(\d{4})(\d{2})(\d{2})/, '$1.$2.$3') : '-',
+        건축주: item.bldNm || '-',
+        구조: item.strctCdNm || '-',
+        지붕: item.roofCdNm || '-',
+        세대수: item.hhldCnt ? item.hhldCnt + '세대' : '-',
+        주차: item.indrAutoUtcnt ? `실내${item.indrAutoUtcnt}대/실외${item.oudrAutoUtcnt||0}대` : '-',
+        연면적평: areaNum >= 1 ? Math.round(areaNum * 0.3025).toLocaleString() + '평' : '-',
+        sido: addr.split(' ')[0] || '-',
+        sigungu: addr.split(' ').slice(0,2).join(' ') || '-',
       };
     });
 }
@@ -2757,20 +2781,49 @@ function openSiteDetail(id) {
 
   const grid = document.getElementById('detail-info-grid');
   if (grid) grid.innerHTML = [
-    {label:'연면적', val: s.area + '㎡'},
-    {label:'층수', val: s.floors !== '-' ? '지상 ' + s.floors + '층' : '-'},
-    {label:'허가일', val: s.허가일},
-    {label:'착공일', val: s.착공일},
-    {label:'건물 용도', val: s.type},
-    {label:'담당 시공사', val: '현장 방문 후 확인'},
-  ].map(({label,val}) => `
-    <div style="background:var(--surface2);border-radius:8px;padding:10px 12px">
-      <div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">${label}</div>
-      <div style="font-size:13px;font-weight:600">${val}</div>
-    </div>`).join('');
+    {label:'📐 연면적', val: s.area + '㎡' + (s.연면적평 && s.연면적평 !== '-' ? ' (' + s.연면적평 + ')' : '')},
+    {label:'🏢 지상/지하', val: (s.floors !== '-' ? '지상 ' + s.floors + '층' : '-') + (s.underFloors && s.underFloors !== '-' ? ' / 지하 ' + s.underFloors + '층' : '')},
+    {label:'🔨 건물 구조', val: s.구조 !== '-' ? s.구조 : '-'},
+    {label:'🏠 건물 용도', val: s.type},
+    {label:'📅 허가일', val: s.허가일},
+    {label:'⚒️ 착공일', val: s.착공일},
+    {label:'🏁 준공 예정', val: s.준공예정일 || '-'},
+    {label:'🏘️ 세대수', val: s.세대수 !== '-' ? s.세대수 : '-'},
+    {label:'🚗 주차', val: s.주차 !== '-' ? s.주차 : '정보 없음'},
+    {label:'📍 행정구역', val: s.sigungu || '-'},
+  ].filter(({val}) => val && val !== '-' && val !== '정보 없음')
+   .map(({label,val}) =>
+    '<div style="background:var(--surface2);border-radius:8px;padding:10px 12px">'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">'+label+'</div>'
+    + '<div style="font-size:13px;font-weight:600">'+val+'</div>'
+    + '</div>'
+  ).join('');
 
   setEl('detail-material', '📦 ' + (suggestMaterial[s.status] || '-'));
   setEl('detail-strategy', strategyMap[s.status] || '-');
+
+  // 영업 타이밍 배지
+  const badgesEl = document.getElementById('detail-timing-badges');
+  if (badgesEl) {
+    const timingBadges = [];
+    const hotStatuses = ['골조공사','내외부마감'];
+    const warmStatuses = ['착공','기초공사'];
+    if (hotStatuses.includes(s.status)) {
+      timingBadges.push('<span style="background:rgba(239,68,68,0.15);color:#FCA5A5;border:1px solid rgba(239,68,68,0.3);padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700">🔥 지금 영업 적기!</span>');
+    } else if (warmStatuses.includes(s.status)) {
+      timingBadges.push('<span style="background:rgba(245,158,11,0.15);color:#FCD34D;border:1px solid rgba(245,158,11,0.3);padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700">⚡ 준비 단계</span>');
+    }
+    if (s.준공예정일 && s.준공예정일 !== '-') {
+      const dday = Math.ceil((new Date(s.준공예정일.replace(/\./g,'-')) - new Date()) / 86400000);
+      if (dday > 0 && dday < 180) {
+        timingBadges.push('<span style="background:rgba(59,130,246,0.15);color:#93C5FD;border:1px solid rgba(59,130,246,0.3);padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700">📅 준공 D-' + dday + '</span>');
+      }
+    }
+    if (s.estimated) {
+      timingBadges.push('<span style="background:rgba(107,114,128,0.15);color:#9CA3AF;border:1px solid rgba(107,114,128,0.3);padding:4px 10px;border-radius:20px;font-size:11px">📊 추정값</span>');
+    }
+    badgesEl.innerHTML = timingBadges.join('');
+  }
 
   const favBtn = document.getElementById('detail-fav-btn');
   if (favBtn) favBtn.textContent = favSites.includes(s.id) ? '⭐ 즐겨찾기 해제' : '☆ 즐겨찾기';

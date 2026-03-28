@@ -15,7 +15,7 @@ const app  = express();
 const PORT = process.env.PORT || 3001;
 
 const API_KEY    = process.env.ARCH_API_KEY   || '703732760a8517b24a58c87adb138c1a544b0f971e87144d5d08eda4ef0029d8';
-const JWT_SECRET = process.env.JWT_SECRET     || 'gongsaradar-dev-secret-change-in-prod-2024';
+const JWT_SECRET = process.env.JWT_SECRET     || 'gongsaradar-secret-2024-super-safe';
 const ADMIN_EMAIL= process.env.ADMIN_EMAIL    || 'admin@gongsaradar.com';
 const ADMIN_PW   = process.env.ADMIN_PASSWORD || 'admin1234!';
 

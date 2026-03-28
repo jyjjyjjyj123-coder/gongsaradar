@@ -3958,6 +3958,30 @@ function renderPipeline() {
 }
 
 
+
+// stub functions (호환성 유지)
+function renderTypeChart(data) {
+  // 용도별 차트 - renderRegionChart에 통합됨
+  renderRegionChart(data);
+}
+function renderStatusChart(data) {
+  // 공정 단계별 차트 stub
+  const el = document.getElementById('stage-chart');
+  if (!el) return;
+  const stageMap = {};
+  data.forEach(s => { stageMap[s.status] = (stageMap[s.status]||0)+1; });
+  const sorted = Object.entries(stageMap).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  el.innerHTML = sorted.map(([k,v]) =>
+    `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <div style="font-size:12px;width:80px;color:var(--muted)">${k}</div>
+      <div style="flex:1;height:6px;background:var(--surface3);border-radius:3px">
+        <div style="width:${Math.round(v/data.length*100)}%;height:100%;background:var(--accent);border-radius:3px"></div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);min-width:30px;text-align:right">${v}</div>
+    </div>`
+  ).join('');
+}
+
 </script>
 
 <div class="modal-overlay" id="modal-change-pw">

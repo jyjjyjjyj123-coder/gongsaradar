@@ -628,7 +628,7 @@ body{font-family:'Pretendard',sans-serif;background:var(--bg);color:var(--text);
       <div class="stats-row">
         <div class="stat" style="--c:#3B82F6">
           <div class="stat-label">수집된 전국 공사현장</div>
-          <div class="stat-val" id="stat-total-count">수집 중…</div>
+          <div class="stat-val" id="stat-total-count">-</div>
           <div class="stat-change up" id="stat-total-sub">실시간 공공데이터 연동</div>
         </div>
         <div class="stat" style="--c:#10B981">
@@ -2236,6 +2236,14 @@ async function loadDashMap() {
 
   try {
     const r = await fetch(LOCAL_SERVER + '/api/building/all', {signal: AbortSignal.timeout(10000), headers: authHeaders()});
+    
+    // 401: 토큰 없음 → 잠시 후 재시도 (appInit 완료 전 호출된 경우)
+    if (r.status === 401) {
+      console.warn('[loadDashMap] 401 - 토큰 없음, 2초 후 재시도');
+      setTimeout(() => { dashMapLoaded = false; loadDashMap(); }, 2000);
+      return;
+    }
+    
     const json = await r.json();
 
     // 수집 중 → 5초 폴링으로 자동 감지
@@ -2252,6 +2260,8 @@ async function loadDashMap() {
     const rawItems = body?.items?.item;
     if (!rawItems) {
       setEl('dash-sub', '⚠️ 데이터를 가져오지 못했습니다. 새로고침을 눌러주세요.');
+      setEl('stat-total-count', '-');
+      setEl('stat-total-sub', '데이터 없음');
       return;
     }
 
@@ -2279,7 +2289,9 @@ async function loadDashMap() {
 
   } catch(e) {
     console.error('[loadDashMap 실패]', e.message);
-    setEl('dash-sub', '⚠️ 서버 연결 실패. 서버가 실행 중인지 확인하세요.');
+    setEl('dash-sub', '⚠️ 서버 연결 실패. 새로고침을 눌러주세요.');
+    setEl('stat-total-count', '⚠️ 오류');
+    setEl('stat-total-sub', '새로고침 필요');
     // 서버 연결 실패 시 DUMMY 데이터로 fallback 렌더
     if (!sites.length) {
       renderAll();

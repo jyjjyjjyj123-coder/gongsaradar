@@ -25,7 +25,9 @@ const staticDir = fs.existsSync(path.join(__dirname, 'public')) ? path.join(__di
 app.use(express.static(staticDir));
 
 // ── DB 초기화
-const DB_FILE = path.join(__dirname, 'gongsaradar.db');
+// Railway 볼륨이 없으면 앱 디렉토리에 저장
+const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || __dirname;
+const DB_FILE = path.join(DATA_DIR, 'gongsaradar.db');
 const db = new Database(DB_FILE);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
@@ -310,7 +312,7 @@ function callApi(serviceKey, sigunguCd, bjdongCd, numOfRows) {
   });
 }
 
-const CACHE_FILE = path.join(__dirname, 'cache_sites.json');
+const CACHE_FILE = path.join(DATA_DIR, 'cache_sites.json');
 function loadCache() { try { return fs.existsSync(CACHE_FILE) ? JSON.parse(fs.readFileSync(CACHE_FILE,'utf-8')) : null; } catch { return null; } }
 
 let isCollecting = false;

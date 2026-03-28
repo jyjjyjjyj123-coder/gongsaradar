@@ -503,14 +503,36 @@ app.get('/api/cache/status', authRequired, (req, res) => {
 
 // ══ 카카오맵 SDK 프록시 (Railway에서 dapi.kakao.com 직접 접근 불가 시 우회)
 app.get('/kakao-maps-sdk.js', (req, res) => {
-  const https = require('https');
-  const url = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=' + (req.query.appkey || '') + '&libraries=' + (req.query.libraries || '') + '&autoload=' + (req.query.autoload || 'false');
-  https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://gongsaradar-production.up.railway.app' } }, (apiRes) => {
+  const appkey = req.query.appkey || '';
+  const libraries = req.query.libraries || 'services,clusterer';
+  const autoload = req.query.autoload || 'false';
+  const targetUrl = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${appkey}&libraries=${libraries}&autoload=${autoload}`;
+  
+  const opts = {
+    hostname: 'dapi.kakao.com',
+    path: `/v2/maps/sdk.js?appkey=${appkey}&libraries=${libraries}&autoload=${autoload}`,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Referer': 'https://gongsaradar-production.up.railway.app',
+      'Origin': 'https://gongsaradar-production.up.railway.app',
+      'Accept': '*/*'
+    }
+  };
+  
+  https.get(opts, (apiRes) => {
+    const statusCode = apiRes.statusCode;
+    if (statusCode !== 200) {
+      // 카카오맵 응답이 실패하면 빈 스크립트 반환 (에러 방지)
+      res.setHeader('Content-Type', 'application/javascript');
+      res.send(`// Kakao Maps SDK unavailable (${statusCode}) - maps disabled`);
+      return;
+    }
     res.setHeader('Content-Type', 'application/javascript');
     res.setHeader('Cache-Control', 'public, max-age=3600');
     apiRes.pipe(res);
   }).on('error', (e) => {
-    res.status(503).send('// Kakao Maps SDK load failed: ' + e.message);
+    res.setHeader('Content-Type', 'application/javascript');
+    res.send('// Kakao Maps SDK load failed: ' + e.message);
   });
 });
 

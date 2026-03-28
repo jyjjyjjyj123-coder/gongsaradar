@@ -2009,19 +2009,18 @@ function addMarkersToLayer(list, targetMap) {
     return marker;
   });
 
-  // 클러스터러로 묶기
-  clusterer = new kakao.maps.MarkerClusterer({
-    map: targetMap,
-    averageCenter: true,
-    minLevel: 4,
-    styles: [
-      { width:'42px',height:'42px',background:'rgba(16,185,129,0.88)',borderRadius:'50%',color:'white',textAlign:'center',lineHeight:'42px',fontSize:'12px',fontWeight:'800',border:'2.5px solid white',boxShadow:'0 2px 8px rgba(16,185,129,0.5)' },
-      { width:'50px',height:'50px',background:'rgba(245,158,11,0.92)',borderRadius:'50%',color:'white',textAlign:'center',lineHeight:'50px',fontSize:'13px',fontWeight:'800',border:'2.5px solid white',boxShadow:'0 2px 8px rgba(245,158,11,0.5)' },
-      { width:'58px',height:'58px',background:'rgba(59,130,246,0.92)',borderRadius:'50%',color:'white',textAlign:'center',lineHeight:'58px',fontSize:'14px',fontWeight:'800',border:'2.5px solid white',boxShadow:'0 2px 8px rgba(59,130,246,0.5)' }
-    ]
-  });
-  clusterer.addMarkers(kakaoMarkers);
-}
+  // 클러스터러로 묶기 (MarkerClusterer 안전 체크)
+  if (typeof kakao.maps.MarkerClusterer === "function") {
+    try {
+      clusterer = new kakao.maps.MarkerClusterer({
+        map: targetMap, averageCenter: true, minLevel: 4,
+        styles: [{ width:'42px',height:'42px',background:'rgba(16,185,129,0.88)',borderRadius:'50%',color:'white',textAlign:'center',lineHeight:'42px',fontSize:'12px',fontWeight:'800',border:'2.5px solid white' },{ width:'50px',height:'50px',background:'rgba(245,158,11,0.92)',borderRadius:'50%',color:'white',textAlign:'center',lineHeight:'50px',fontSize:'13px',fontWeight:'800',border:'2.5px solid white' },{ width:'58px',height:'58px',background:'rgba(59,130,246,0.92)',borderRadius:'50%',color:'white',textAlign:'center',lineHeight:'58px',fontSize:'14px',fontWeight:'800',border:'2.5px solid white' }]
+      });
+      clusterer.addMarkers(kakaoMarkers);
+    } catch(e) { console.warn("[clusterer 오류]", e.message); kakaoMarkers.forEach(m => m.setMap(targetMap)); }
+  } else {
+    kakaoMarkers.forEach(m => m.setMap(targetMap));
+  }
 
 
 function filterMap(el, type) {
@@ -2714,15 +2713,17 @@ function renderExploreMap(list) {
     return marker;
   });
 
-  exploreClusterer = new kakao.maps.MarkerClusterer({
-    map: mapExplore, averageCenter: true, minLevel: 4,
-    styles: [
-      {width:'38px',height:'38px',background:'rgba(16,185,129,0.88)',borderRadius:'50%',color:'white',textAlign:'center',lineHeight:'38px',fontSize:'12px',fontWeight:'800',border:'2px solid white'},
-      {width:'46px',height:'46px',background:'rgba(245,158,11,0.9)',borderRadius:'50%',color:'white',textAlign:'center',lineHeight:'46px',fontSize:'13px',fontWeight:'800',border:'2px solid white'},
-      {width:'54px',height:'54px',background:'rgba(59,130,246,0.9)',borderRadius:'50%',color:'white',textAlign:'center',lineHeight:'54px',fontSize:'14px',fontWeight:'800',border:'2px solid white'}
-    ]
-  });
-  exploreClusterer.addMarkers(kakaoMarkers);
+  if (typeof kakao.maps.MarkerClusterer === "function") {
+    try {
+      exploreClusterer = new kakao.maps.MarkerClusterer({
+        map: mapExplore, averageCenter: true, minLevel: 4,
+        styles: [{width:'38px',height:'38px',background:'rgba(16,185,129,0.88)',borderRadius:'50%',color:'white',textAlign:'center',lineHeight:'38px',fontSize:'11px',fontWeight:'800'},{width:'46px',height:'46px',background:'rgba(245,158,11,0.9)',borderRadius:'50%',color:'white',textAlign:'center',lineHeight:'46px',fontSize:'12px',fontWeight:'800'},{width:'54px',height:'54px',background:'rgba(59,130,246,0.9)',borderRadius:'50%',color:'white',textAlign:'center',lineHeight:'54px',fontSize:'13px',fontWeight:'800'}]
+      });
+      exploreClusterer.addMarkers(kakaoMarkers);
+    } catch(e) { kakaoMarkers.forEach(m => m.setMap(mapExplore)); }
+  } else {
+    kakaoMarkers.forEach(m => m.setMap(mapExplore));
+  }
 }
 
 // ─── 현장 상세 모달 ───
@@ -3954,6 +3955,8 @@ function renderPipeline() {
   }).join('');
 }
 
+
+}
 </script>
 
 <div class="modal-overlay" id="modal-change-pw">

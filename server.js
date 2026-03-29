@@ -298,6 +298,15 @@ function isValidItem(item) {
   if (!addr || addr.trim().length < 5) return false;
   if (parseFloat(item.totArea||'0') < 1) return false;
   if (!item.mainPurpsCdNm || !item.mainPurpsCdNm.trim()) return false;
+  
+  // 준공 완료 현장 제외 (사용승인일이 오늘 이전 = 이미 완공된 건물)
+  if (item.useAprDay && String(item.useAprDay).trim().length >= 8) {
+    const ymd = String(item.useAprDay).replace(/\D/g,'').slice(0,8);
+    if (ymd.length === 8) {
+      const approvalDate = new Date(ymd.slice(0,4)+'-'+ymd.slice(4,6)+'-'+ymd.slice(6,8));
+      if (approvalDate <= new Date()) return false;
+    }
+  }
   return true;
 }
 

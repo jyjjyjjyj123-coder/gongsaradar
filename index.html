@@ -3362,27 +3362,49 @@ function searchByDest() {
 
 // ─── 사이트 상세 모달 열기 ───
 function openSiteDetail(id) {
-  const data = sites.length ? sites : DUMMY;
-  const s = data.find(d => d.id === id);
+  const s = (sites.length ? sites : DUMMY).find(x => x.id == id || String(x.id) === String(id));
   if (!s) return;
-  setEl('detail-name', s.name || '-');
-  setEl('detail-addr', s.addr || '-');
-  setEl('detail-type', s.type || '-');
-  setEl('detail-status', s.status || '-');
-  setEl('detail-area', s.area ? s.area + '㎡' : '-');
-  setEl('detail-floors', s.floors ? s.floors + '층' : '-');
-  setEl('detail-permit', s.허가일 || '-');
-  setEl('detail-start', s.착공일 || '-');
-  const btn = document.getElementById('detail-fav-btn');
-  if (btn) {
-    btn.textContent = favSites.includes(s.id) ? '⭐ 즐겨찾기 해제' : '☆ 즐겨찾기 추가';
-    btn.onclick = () => { toggleFav(s.id); btn.textContent = favSites.includes(s.id) ? '⭐ 즐겨찾기 해제' : '☆ 즐겨찾기 추가'; };
-  }
-  if (s.lat && s.lng && map) { map.setCenter(new kakao.maps.LatLng(s.lat, s.lng)); map.setLevel(4); }
+  exCurrentSite = s;
+
+  const statusColorMap3 = {'내외부마감':'#10B981','골조공사':'#F59E0B','착공':'#3B82F6','기초공사':'#3B82F6','인허가완료':'#8B5CF6','준공':'#EF4444'};
+  const sc = statusColorMap3[s.status] || '#6B7280';
+
+  setEl('detail-type-badge', s.type + ' · ' + (s.floors!=='-'?'지상'+s.floors+'층':''));
+  setEl('detail-name', s.name);
+  setEl('detail-addr', '📍 ' + s.addr);
+  setEl('detail-status-txt', s.status + (s.estimated ? '  (예상)' : ''));
+  setEl('detail-progress-txt', '공정률 ' + s.progress + '%');
+
+  const bar = document.getElementById('detail-progress-bar');
+  if (bar) { bar.style.width = s.progress + '%'; bar.style.background = 'linear-gradient(90deg,'+sc+',#7C3AED)'; }
+
+  const grid = document.getElementById('detail-info-grid');
+  if (grid) grid.innerHTML = [
+    {label:'📐 연면적', val: s.area + '㎡'},
+    {label:'🏢 층수', val: s.floors !== '-' ? '지상 ' + s.floors + '층' : '-'},
+    {label:'🏠 건물 용도', val: s.type},
+    {label:'📅 허가일', val: s.허가일},
+    {label:'⚒️ 착공일', val: s.착공일},
+    {label:'📊 공정률', val: s.progress + '%'},
+    {label:'🏁 준공 예정', val: s.준공예정일 || '-'},
+    {label:'📍 행정구역', val: s.sigungu || s.addr.split(' ').slice(0,2).join(' ')},
+  ].map(({label,val}) =>
+    '<div style="background:var(--surface2);border-radius:8px;padding:10px 12px">'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">'+label+'</div>'
+    + '<div style="font-size:13px;font-weight:600">'+val+'</div>'
+    + '</div>'
+  ).join('');
+
+  setEl('detail-material', '📦 ' + (suggestMaterial[s.status] || '-'));
+  setEl('detail-strategy', strategyMap[s.status] || '-');
+
+  const favBtn = document.getElementById('detail-fav-btn');
+  if (favBtn) favBtn.textContent = favSites.includes(s.id) ? '⭐ 즐겨찾기 해제' : '☆ 즐겨찾기 추가';
+
   openModal('site-detail');
+  if (map && s.lat && s.lng) { map.setCenter(new kakao.maps.LatLng(s.lat, s.lng)); map.setLevel(4); }
 }
 
-// ─── Google Calendar 연동 ───
 function connectGoogle() {
   showToast('🔗 Google 로그인 기능은 준비 중입니다.');
 }

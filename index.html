@@ -2763,7 +2763,7 @@ const strategyMap = {
 };
 
 function openSiteDetail(id) {
-  const s = (sites.length ? sites : DUMMY).find(x => x.id === id);
+  const s = (sites.length ? sites : DUMMY).find(x => x.id == id || String(x.id) === String(id));
   if (!s) return;
   exCurrentSite = s;
 
@@ -2791,8 +2791,7 @@ function openSiteDetail(id) {
     {label:'🏘️ 세대수', val: s.세대수 !== '-' ? s.세대수 : '-'},
     {label:'🚗 주차', val: s.주차 !== '-' ? s.주차 : '정보 없음'},
     {label:'📍 행정구역', val: s.sigungu || '-'},
-  ].filter(({val}) => val && val !== '-' && val !== '정보 없음')
-   .map(({label,val}) =>
+  ].map(({label,val}) =>
     '<div style="background:var(--surface2);border-radius:8px;padding:10px 12px">'
     + '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">'+label+'</div>'
     + '<div style="font-size:13px;font-weight:600">'+val+'</div>'

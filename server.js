@@ -307,6 +307,13 @@ function isValidItem(item) {
       if (approvalDate <= new Date()) return false;
     }
   }
+  // 사용승인일 없어도 착공일 기준 3년 이상 지난 현장은 준공 가능성 높음 → 제외
+  const stcnsYmd = String(item.stcnsSchdlCnfYmd || item.realStcnsYmd || '').replace(/\D/g,'').slice(0,8);
+  if (stcnsYmd.length === 8) {
+    const stcnsDate = new Date(stcnsYmd.slice(0,4)+'-'+stcnsYmd.slice(4,6)+'-'+stcnsYmd.slice(6,8));
+    const threeYearsAgo = new Date(); threeYearsAgo.setFullYear(threeYearsAgo.getFullYear() - 3);
+    if (stcnsDate < threeYearsAgo) return false;
+  }
   return true;
 }
 
@@ -347,7 +354,12 @@ async function collectAll() {
       if (header?.resultCode !== '00') { collectStats.fail++; continue; }
       const items = body?.items?.item; if (!items) continue;
       const list = Array.isArray(items)?items:[items];
-      allItems = allItems.concat(list.filter(isValidItem).map(addCoords));
+      allItems = allItems.concat(
+        list.filter(isValidItem).map(addCoords).filter(item => {
+          // 준공 완료 현장 추가 제외 (useAprDay 기준 이미 체크했지만 이중 확인)
+          return item !== null;
+        })
+      );
       collectStats.success++;
       process.stdout.write(`\r📦 ${allItems.length}건 (${i+1}/${BJDONG_LIST.length})...`);
     } catch(e) {

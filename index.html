@@ -2213,6 +2213,9 @@ function parseRawItems(rawItems) {
       const approx = (!sLat) ? getApproxCoords(addr, sigunguCd) : null;
       const areaNum = parseFloat(item.totArea || '0');
       validIdx++;
+      // 준공 완료(공정률 100%) 현장 제외
+      if (status === '준공' || pct >= 100) return null;
+
       return {
         id: validIdx,
         name: refineName(item, addr),
@@ -2240,7 +2243,7 @@ function parseRawItems(rawItems) {
         sido: addr.split(' ')[0] || '-',
         sigungu: addr.split(' ').slice(0,2).join(' ') || '-',
       };
-    });
+    }).filter(Boolean);
 }
 
 function startCollectingPoll() {

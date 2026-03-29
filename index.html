@@ -2763,8 +2763,12 @@ const strategyMap = {
 };
 
 function openSiteDetail(id) {
-  const s = (sites.length ? sites : DUMMY).find(x => x.id == id || String(x.id) === String(id));
-  if (!s) return;
+  const pool = sites.length ? sites : DUMMY;
+  const s = pool.find(x => x.id == id || String(x.id) === String(id));
+  if (!s) { 
+    console.warn('[openSiteDetail] id=' + id + ' not found in pool(' + pool.length + '건). 첫번째 id:', pool[0]?.id, '타입:', typeof pool[0]?.id);
+    return; 
+  }
   exCurrentSite = s;
 
   const statusColorMap3 = {'내외부마감':'#10B981','골조공사':'#F59E0B','착공':'#3B82F6','기초공사':'#3B82F6','인허가완료':'#8B5CF6','준공':'#EF4444'};
@@ -3362,8 +3366,12 @@ function searchByDest() {
 
 // ─── 사이트 상세 모달 열기 ───
 function openSiteDetail(id) {
-  const s = (sites.length ? sites : DUMMY).find(x => x.id == id || String(x.id) === String(id));
-  if (!s) return;
+  const pool = sites.length ? sites : DUMMY;
+  const s = pool.find(x => x.id == id || String(x.id) === String(id));
+  if (!s) { 
+    console.warn('[openSiteDetail] id=' + id + ' not found in pool(' + pool.length + '건). 첫번째 id:', pool[0]?.id, '타입:', typeof pool[0]?.id);
+    return; 
+  }
   exCurrentSite = s;
 
   const statusColorMap3 = {'내외부마감':'#10B981','골조공사':'#F59E0B','착공':'#3B82F6','기초공사':'#3B82F6','인허가완료':'#8B5CF6','준공':'#EF4444'};

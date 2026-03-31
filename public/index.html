@@ -512,6 +512,12 @@ body{font-family:'Pretendard',sans-serif;background:var(--bg);color:var(--text);
       <div class="nav-item" data-page="settings">
         <span class="nav-icon">⚙️</span> 설정
       </div>
+      <div class="nav-item" id="admin-nav-btn" data-page="admin" style="display:none" onclick="openAdminPage()">
+        <span class="nav-icon">🛡️</span> 관리자
+      </div>
+      <div class="nav-item" onclick="doLogout()" style="margin-top:auto;border-top:1px solid var(--border);padding-top:10px">
+        <span class="nav-icon">🚪</span> 로그아웃
+      </div>
     </div>
   </div>
 
@@ -797,6 +803,7 @@ body{font-family:'Pretendard',sans-serif;background:var(--bg);color:var(--text);
           <button onclick="openModal('add-note')" style="flex:1;padding:10px;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;background:var(--surface2);border:1px solid var(--border);color:var(--text)">📝 노트 작성</button>
           <button onclick="naviFromDetail()" style="flex:1;padding:10px;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;background:#3B82F6;border:none;color:white">🧭 길찾기</button>
           <button onclick="shareFromDetail()" style="flex:1;padding:10px;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;background:#FEE500;border:none;color:#3C1E1E">💬 공유</button>
+          <button onclick="roadviewFromDetail()" style="flex:1;padding:10px;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;background:#10B981;border:none;color:white">🛣️ 로드뷰</button>
         </div>
       </div>
     </div>
@@ -1052,7 +1059,7 @@ body{font-family:'Pretendard',sans-serif;background:var(--bg);color:var(--text);
             <div style="font-size:12px">네비게이션 연동</div>
             <div style="font-size:12px">월 1회 정기 업데이트</div>
           </div>
-          <button class="plan-btn plan-btn-outline" style="margin-top:18px" onclick="showToast('✅ 체험판으로 시작합니다!')">가입하고 1일 무료체험!</button>
+          <button class="plan-btn plan-btn-outline" style="margin-top:18px" onclick="doGuestLogin()">3일 무료 체험!</button>
         </div>
 
         <!-- 스탠다드 -->
@@ -1070,7 +1077,7 @@ body{font-family:'Pretendard',sans-serif;background:var(--bg);color:var(--text);
             <div style="font-size:12px;color:white;font-weight:700">네비게이션 연동</div>
             <div style="font-size:12px;color:white;font-weight:700">월 1회 정기 업데이트</div>
           </div>
-          <button class="plan-btn" style="margin-top:18px;background:#1a0f00;color:white;font-weight:800;font-size:14px" onclick="openModal('payment')">결제하기</button>
+          <button class="plan-btn" style="margin-top:18px;background:#1a0f00;color:white;font-weight:800;font-size:14px" onclick="startPayment('basic')">결제하기</button>
         </div>
 
         <!-- 프리미엄 -->
@@ -1101,7 +1108,7 @@ body{font-family:'Pretendard',sans-serif;background:var(--bg);color:var(--text);
           </div>
           <div style="display:flex;gap:8px;margin-top:18px">
             <button class="plan-btn plan-btn-outline" style="flex:1;border-color:#444;color:white" onclick="showToast('📧 문의: contact@gongsaradar.com')">자세히 보기</button>
-            <button class="plan-btn" style="flex:1;background:var(--gold);color:#1a0f00;font-weight:800" onclick="openModal('payment')">결제하기</button>
+            <button class="plan-btn" style="flex:1;background:var(--gold);color:#1a0f00;font-weight:800" onclick="startPayment('pro')">결제하기</button>
           </div>
         </div>
       </div>
@@ -1734,9 +1741,118 @@ function getApproxCoords(addr, sigunguCd) {
 // ═══════════════════════════════
 
 let SERVICE_KEY = localStorage.getItem('gongsaradar_api_key') || '';
-const LOCAL_SERVER = 'http://localhost:3001';
+const LOCAL_SERVER = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
 let sites = [];
 let favSites = JSON.parse(localStorage.getItem('gongsaradar_favs') || '[]');
+
+// ─── 인증 시스템 ───
+let authToken = localStorage.getItem('gongsainfra_token') || '';
+let currentUser = null;
+let currentPlan = 'free';
+const TRIAL_KEY = 'gongsainfra_trial_start';
+const TRIAL_DAYS = 3;
+
+function authHeaders() {
+  return authToken ? { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+}
+
+async function apiCall(method, path, body) {
+  const opts = { method, headers: authHeaders() };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(LOCAL_SERVER + path, opts);
+  if (r.status === 401) { authToken = ''; localStorage.removeItem('gongsainfra_token'); showAuthScreen(); throw new Error('인증 필요'); }
+  return r.json();
+}
+
+function getTrialInfo() {
+  let started = localStorage.getItem(TRIAL_KEY) || '';
+  if (!started) { started = new Date().toISOString().slice(0,10); localStorage.setItem(TRIAL_KEY, started); }
+  const diff = Math.floor((Date.now() - new Date(started).getTime()) / 86400000);
+  return { daysLeft: Math.max(0, TRIAL_DAYS - diff), expired: diff >= TRIAL_DAYS };
+}
+
+function showAuthScreen() {
+  document.getElementById('auth-overlay').style.display = 'flex';
+}
+function hideAuthScreen() {
+  document.getElementById('auth-overlay').style.display = 'none';
+}
+
+async function doLogin() {
+  const email = document.getElementById('auth-email').value.trim();
+  const pw = document.getElementById('auth-pw').value;
+  if (!email || !pw) { document.getElementById('auth-err').textContent = '이메일과 비밀번호를 입력하세요.'; return; }
+  try {
+    const res = await fetch(LOCAL_SERVER + '/api/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email,password:pw}) });
+    const data = await res.json();
+    if (!res.ok) { document.getElementById('auth-err').textContent = data.error || '로그인 실패'; return; }
+    authToken = data.token; localStorage.setItem('gongsainfra_token', authToken);
+    parseToken(); hideAuthScreen(); loadDashMap();
+    showToast('✅ 로그인 성공!');
+  } catch(e) { document.getElementById('auth-err').textContent = '서버 연결 실패'; }
+}
+
+async function doRegister() {
+  const email = document.getElementById('auth-email').value.trim();
+  const pw = document.getElementById('auth-pw').value;
+  const name = document.getElementById('auth-name')?.value?.trim() || '';
+  const company = document.getElementById('auth-company')?.value?.trim() || '';
+  if (!email || !pw) { document.getElementById('auth-err').textContent = '이메일과 비밀번호를 입력하세요.'; return; }
+  if (pw.length < 6) { document.getElementById('auth-err').textContent = '비밀번호는 6자 이상이어야 합니다.'; return; }
+  try {
+    const res = await fetch(LOCAL_SERVER + '/api/auth/register', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email,password:pw,name,company}) });
+    const data = await res.json();
+    if (!res.ok) { document.getElementById('auth-err').textContent = data.error || '회원가입 실패'; return; }
+    authToken = data.token; localStorage.setItem('gongsainfra_token', authToken);
+    parseToken(); hideAuthScreen(); loadDashMap();
+    showToast('✅ 회원가입 완료!');
+  } catch(e) { document.getElementById('auth-err').textContent = '서버 연결 실패'; }
+}
+
+function doGuestLogin() {
+  hideAuthScreen();
+  const trial = getTrialInfo();
+  if (trial.expired) { showTrialExpired(); return; }
+  showToast('게스트 모드 (체험 ' + trial.daysLeft + '일 남음)');
+  loadDashMap();
+}
+
+function doLogout() {
+  authToken = ''; currentUser = null; currentPlan = 'free';
+  localStorage.removeItem('gongsainfra_token');
+  showAuthScreen(); showToast('로그아웃 되었습니다.');
+}
+
+function parseToken() {
+  if (!authToken) return;
+  try {
+    const parts = authToken.split('.');
+    if (parts.length !== 3) return;
+    const payload = JSON.parse(atob(parts[1]));
+    currentUser = payload;
+    currentPlan = payload.plan || 'free';
+    updatePlanUI();
+  } catch(e) { authToken = ''; }
+}
+
+function updatePlanUI() {
+  const badge = document.querySelector('.plan-badge .plan-name');
+  const labels = { free:'무료 체험', basic:'베이직', pro:'프로', team:'팀', enterprise:'Enterprise' };
+  if (badge) badge.textContent = labels[currentPlan] || '무료 체험';
+  // 관리자 버튼
+  const adminBtn = document.getElementById('admin-nav-btn');
+  if (adminBtn) adminBtn.style.display = currentPlan === 'enterprise' ? 'flex' : 'none';
+}
+
+function showTrialExpired() {
+  const overlay = document.getElementById('trial-expired-overlay');
+  if (overlay) overlay.style.display = 'flex';
+}
+
+function roadviewFromDetail() {
+  if (!exCurrentSite || !exCurrentSite.lat || !exCurrentSite.lng) { showToast('좌표 정보 없음'); return; }
+  window.open('https://map.kakao.com/link/roadview/' + exCurrentSite.lat + ',' + exCurrentSite.lng, '_blank');
+}
 
 // ─── 더미 데이터 ───
 const DUMMY = [
@@ -3403,14 +3519,152 @@ if (SERVICE_KEY && document.getElementById('api-key-input')) {
   updateApiStatus('ok');
 }
 
+// ─── 개인정보처리방침 ───
+function showPrivacy() { document.getElementById('privacy-modal').style.display = 'flex'; }
+function hidePrivacy() { document.getElementById('privacy-modal').style.display = 'none'; }
+
+// ─── 관리자 페이지 ───
+async function openAdminPage() {
+  if (currentPlan !== 'enterprise') { showToast('enterprise 플랜만 접근 가능합니다.'); return; }
+  try {
+    const stats = await apiCall('GET', '/api/admin/stats');
+    const users = await apiCall('GET', '/api/admin/users');
+    let html = '<div style="padding:20px"><h2 style="color:var(--gold);margin-bottom:16px">관리자 대시보드</h2>';
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px">';
+    html += '<div class="card" style="padding:14px;text-align:center"><div style="color:var(--muted);font-size:11px">총 가입자</div><div style="font-size:24px;font-weight:800;color:var(--accent-light)">' + stats.total + '</div></div>';
+    html += '<div class="card" style="padding:14px;text-align:center"><div style="color:var(--muted);font-size:11px">오늘 신규</div><div style="font-size:24px;font-weight:800;color:var(--green)">' + stats.todayNew + '</div></div>';
+    html += '<div class="card" style="padding:14px;text-align:center"><div style="color:var(--muted);font-size:11px">예상 월 매출</div><div style="font-size:24px;font-weight:800;color:var(--gold)">' + (stats.revenue/10000).toFixed(1) + '만</div></div>';
+    html += '</div>';
+    // 플랜별
+    html += '<div class="card" style="padding:14px;margin-bottom:16px"><div style="font-weight:700;margin-bottom:10px">플랜별 현황</div>';
+    ['free','basic','pro','team','enterprise'].forEach(p => {
+      const cnt = stats.planCounts?.[p] || 0;
+      html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="width:70px;font-size:12px;color:var(--muted2)">' + p + '</span><div style="flex:1;height:16px;background:var(--surface2);border-radius:4px;overflow:hidden"><div style="height:100%;width:' + (stats.total>0?cnt/stats.total*100:0) + '%;background:var(--accent);border-radius:4px"></div></div><span style="font-size:12px;font-weight:700;width:30px;text-align:right">' + cnt + '</span></div>';
+    });
+    html += '</div>';
+    // 유저 목록
+    html += '<div class="card" style="padding:14px"><div style="font-weight:700;margin-bottom:10px">유저 목록 (최근 30명)</div>';
+    (users.users || []).slice(0,30).forEach(u => {
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><div><div style="font-size:12px;font-weight:600">' + u.email + '</div><div style="font-size:10px;color:var(--muted)">' + (u.name||'-') + ' · ' + (u.created_at||'').slice(0,10) + '</div></div><span style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:4px;background:var(--surface2);color:var(--accent-light)">' + u.plan + '</span></div>';
+    });
+    html += '</div></div>';
+    const content = document.querySelector('.main-content .page.active');
+    if (content) content.innerHTML = html;
+  } catch(e) { showToast('관리자 데이터 로드 실패'); }
+}
+
+// ─── 결제 (토스페이먼츠) ───
+async function startPayment(planId) {
+  if (!authToken) { showAuthScreen(); return; }
+  const PRICES = { basic: 9900, pro: 29900, team: 99000 };
+  const NAMES = { basic: '베이직', pro: '프로', team: '팀' };
+  const price = PRICES[planId];
+  if (!price) return;
+  try {
+    if (!window.TossPayments) {
+      const sc = document.createElement('script');
+      sc.src = 'https://js.tosspayments.com/v1/payment';
+      document.head.appendChild(sc);
+      await new Promise((ok,fail) => { sc.onload=ok; sc.onerror=fail; });
+    }
+    const clientKey = '46w9ps99zph';
+    const toss = TossPayments(clientKey);
+    const orderId = 'gongsainfra_' + planId + '_' + Date.now();
+    await toss.requestPayment('카드', {
+      amount: price, orderId,
+      orderName: '공사인프라 ' + NAMES[planId] + ' (월간)',
+      customerName: currentUser?.email || '사용자',
+      successUrl: LOCAL_SERVER + '/payment/success?plan=' + planId,
+      failUrl: LOCAL_SERVER + '/payment/fail',
+    });
+  } catch(e) { if (e?.code !== 'USER_CANCEL') showToast('결제 오류: ' + (e?.message || '')); }
+}
+
+// ─── 초기화 ───
 kakao.maps.load(function() {
   initMap();
-  // renderAll()은 loadDashMap 완료 후 내부에서 호출됨
-  // 서버 캐시 데이터를 우선 로드, 실패 시 DUMMY로 fallback
+  // 인증 체크
+  if (authToken) {
+    parseToken();
+    const trial = getTrialInfo();
+    if (currentPlan === 'free' && trial.expired) { showTrialExpired(); }
+  } else {
+    // 게스트 체험 체크
+    const trial = getTrialInfo();
+    if (trial.expired) { showAuthScreen(); }
+  }
   setTimeout(initKakaoSDK, 1000);
   initMobileNav();
   loadDashMap();
 });
 </script>
+
+<!-- 로그인/회원가입 오버레이 -->
+<div id="auth-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border-radius:18px;padding:32px;width:90%;max-width:380px;border:1px solid var(--border)">
+    <div style="text-align:center;margin-bottom:24px">
+      <div style="width:60px;height:60px;border-radius:16px;background:linear-gradient(135deg,var(--accent),#7C3AED);display:inline-flex;align-items:center;justify-content:center;font-size:28px;margin-bottom:12px">📡</div>
+      <div style="font-size:22px;font-weight:800">공사인프라</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">건설 영업의 시작</div>
+    </div>
+    <div id="auth-err" style="color:var(--red);font-size:12px;margin-bottom:8px;text-align:center"></div>
+    <input id="auth-email" class="form-input" placeholder="이메일" style="width:100%;margin-bottom:8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:11px;border-radius:9px;font-size:13px">
+    <input id="auth-pw" type="password" class="form-input" placeholder="비밀번호 (6자 이상)" style="width:100%;margin-bottom:8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:11px;border-radius:9px;font-size:13px">
+    <div id="auth-register-fields" style="display:none">
+      <input id="auth-name" class="form-input" placeholder="이름 (선택)" style="width:100%;margin-bottom:8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:11px;border-radius:9px;font-size:13px">
+      <input id="auth-company" class="form-input" placeholder="회사명 (선택)" style="width:100%;margin-bottom:8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:11px;border-radius:9px;font-size:13px">
+    </div>
+    <button onclick="doLogin()" id="auth-login-btn" style="width:100%;padding:13px;border-radius:9px;background:var(--accent);color:white;font-weight:700;font-size:14px;border:none;cursor:pointer;margin-bottom:8px">로그인</button>
+    <button onclick="doRegister()" id="auth-register-btn" style="display:none;width:100%;padding:13px;border-radius:9px;background:var(--green);color:white;font-weight:700;font-size:14px;border:none;cursor:pointer;margin-bottom:8px">회원가입</button>
+    <button onclick="doGuestLogin()" style="width:100%;padding:13px;border-radius:9px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-weight:700;font-size:14px;cursor:pointer;margin-bottom:12px">🚀 게스트로 시작</button>
+    <div style="text-align:center;display:flex;gap:12px;justify-content:center">
+      <span onclick="toggleAuthMode()" style="color:var(--accent-light);font-size:12px;cursor:pointer" id="auth-toggle-link">회원가입</span>
+      <span onclick="showPrivacy()" style="color:var(--muted);font-size:11px;cursor:pointer">개인정보처리방침</span>
+    </div>
+  </div>
+</div>
+<script>
+let authMode = 'login';
+function toggleAuthMode() {
+  authMode = authMode === 'login' ? 'register' : 'login';
+  document.getElementById('auth-register-fields').style.display = authMode === 'register' ? 'block' : 'none';
+  document.getElementById('auth-login-btn').style.display = authMode === 'login' ? 'block' : 'none';
+  document.getElementById('auth-register-btn').style.display = authMode === 'register' ? 'block' : 'none';
+  document.getElementById('auth-toggle-link').textContent = authMode === 'login' ? '회원가입' : '로그인으로';
+  document.getElementById('auth-err').textContent = '';
+}
+</script>
+
+<!-- 체험 만료 오버레이 -->
+<div id="trial-expired-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:9998;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border-radius:18px;padding:32px;width:90%;max-width:380px;text-align:center;border:1px solid var(--border)">
+    <div style="font-size:40px;margin-bottom:12px">⏰</div>
+    <div style="font-size:20px;font-weight:800;margin-bottom:8px">무료 체험이 종료되었습니다</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:24px;line-height:1.6">3일간의 무료 체험 기간이 만료되었습니다.<br>계속 이용하시려면 요금제를 선택해 주세요.</div>
+    <button onclick="document.getElementById('trial-expired-overlay').style.display='none';document.querySelectorAll('.nav-item').forEach(n=>{if(n.dataset.page==='pricing')n.click()})" style="width:100%;padding:14px;border-radius:9px;background:var(--accent);color:white;font-weight:700;font-size:15px;border:none;cursor:pointer;margin-bottom:10px">요금제 선택하기</button>
+    <button onclick="showAuthScreen();document.getElementById('trial-expired-overlay').style.display='none'" style="width:100%;padding:12px;border-radius:9px;background:var(--surface2);border:1px solid var(--border);color:var(--muted);font-size:13px;cursor:pointer">로그인</button>
+  </div>
+</div>
+
+<!-- 개인정보처리방침 모달 -->
+<div id="privacy-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:10000;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border-radius:16px;padding:24px;width:90%;max-width:600px;max-height:80vh;overflow-y:auto;border:1px solid var(--border)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <span style="font-size:16px;font-weight:800">개인정보처리방침</span>
+      <button onclick="hidePrivacy()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:700">닫기</button>
+    </div>
+    <div style="font-size:13px;color:var(--muted2);line-height:2">
+      이브이네트웍스(주) (이하 "회사")는 「개인정보 보호법」에 따라 이용자의 개인정보를 보호하고 이와 관련한 고충을 신속하게 처리하기 위하여 다음과 같이 개인정보처리방침을 수립·공개합니다.<br><br>
+      <b>1. 수집하는 개인정보 항목</b><br>• 필수: 이메일 주소, 비밀번호 (암호화 저장)<br>• 선택: 이름, 회사명<br>• 결제 시: 결제 정보 (토스페이먼츠에 위탁 처리)<br>• 자동 수집: 서비스 이용 기록, 접속 IP<br><br>
+      <b>2. 수집 목적</b><br>• 서비스 제공 및 회원 관리<br>• 구독 플랜 관리 및 결제 처리<br>• 신규 현장 이메일 알림 발송 (프로 플랜 이상)<br>• 서비스 개선 및 통계 분석<br><br>
+      <b>3. 보유 및 이용 기간</b><br>• 회원 탈퇴 시까지 (탈퇴 즉시 DB에서 삭제)<br>• 결제 기록: 전자상거래법에 따라 5년 보관<br><br>
+      <b>4. 제3자 제공</b><br>• 토스페이먼츠(주): 결제 처리 목적<br>• 그 외 제3자에게 개인정보를 제공하지 않습니다.<br><br>
+      <b>5. 개인정보의 파기</b><br>회원 탈퇴 시 지체 없이 데이터베이스에서 완전 삭제합니다.<br><br>
+      <b>6. 개인정보보호 책임자</b><br>• 회사명: 이브이네트웍스(주)<br>• 대표자: 장용준<br>• 서비스명: 공사인프라<br><br>
+      <b>7. 시행일</b><br>이 개인정보처리방침은 2026년 4월 1일부터 시행됩니다.
+    </div>
+  </div>
+</div>
+
 </body>
 </html>

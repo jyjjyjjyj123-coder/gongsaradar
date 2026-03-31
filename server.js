@@ -1732,6 +1732,13 @@ app.post('/api/test/send-alert', authRequired, async (req, res) => {
 
 // ══ 끝: 이메일 알림 시스템 ═══════════════════════════════════════
 
+// ══ SPA 폴백 (API 외 모든 경로 → index.html)
+app.get('*', (req, res) => {
+  const indexPath = path.join(staticDir, 'index.html');
+  if (fs.existsSync(indexPath)) res.sendFile(indexPath);
+  else res.status(404).send('Not Found');
+});
+
 // ══ 서버 시작
 app.listen(PORT, async () => {
   console.log('\n╔══════════════════════════════════╗');

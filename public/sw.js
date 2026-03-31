@@ -47,7 +47,7 @@ self.addEventListener('fetch', (e) => {
 // 푸시 알림 (향후 확장용)
 self.addEventListener('push', (e) => {
   const data = e.data?.json() || {};
-  self.registration.showNotification(data.title || '공사레이더', {
+  self.registration.showNotification(data.title || '공사인프라', {
     body: data.body || '새로운 현장 정보가 있습니다.',
     icon: '/icon-192.png',
     badge: '/icon-192.png',

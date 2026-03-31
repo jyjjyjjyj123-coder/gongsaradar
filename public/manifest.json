@@ -1,6 +1,6 @@
 {
-  "name": "공사레이더 - 건설 영업 인텔리전스",
-  "short_name": "공사레이더",
+  "name": "공사인프라 - 건설 영업 인텔리전스",
+  "short_name": "공사인프라",
   "description": "전국 공사현장 실시간 조회 · 영업 타이밍 분석",
   "start_url": "/",
   "display": "standalone",

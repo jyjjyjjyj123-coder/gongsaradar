@@ -187,6 +187,17 @@ if (ADMIN_EMAIL && ADMIN_PW) {
   console.warn('ADMIN_EMAIL/ADMIN_PASSWORD 환경변수가 설정되지 않았습니다.');
 }
 
+// 게스트 계정 자동 생성
+{
+  const guestEmail = 'guest@gongsainfra.com';
+  const guestPw = bcrypt.hashSync('guest1234', 10);
+  const existingGuest = db.prepare('SELECT id FROM users WHERE email=?').get(guestEmail);
+  if (!existingGuest) {
+    db.prepare('INSERT INTO users (email,password,name,company,plan,role) VALUES (?,?,?,?,?,?)').run(guestEmail, guestPw, '게스트', '', 'free', 'member');
+    console.log('게스트 계정 생성:', guestEmail);
+  }
+}
+
 // ── JWT 미들웨어
 function authRequired(req, res, next) {
   const token = (req.headers.authorization || '').replace('Bearer ', '');

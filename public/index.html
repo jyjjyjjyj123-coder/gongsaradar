@@ -179,6 +179,14 @@ img{max-width:100%;display:block}
 .trial-overlay.open{display:flex}
 .trial-box{background:var(--surface);border-radius:var(--radius-lg);padding:32px;width:90%;max-width:380px;text-align:center;box-shadow:var(--shadow-lg)}
 
+/* ── WELCOME OVERLAY ── */
+.welcome-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px);z-index:10002;align-items:center;justify-content:center}
+.welcome-overlay.open{display:flex}
+.welcome-box{background:var(--surface);border-radius:20px;padding:36px;width:90%;max-width:340px;text-align:center;box-shadow:var(--shadow-lg)}
+.welcome-box .emoji{font-size:48px;margin-bottom:12px}
+.welcome-box h3{font-size:20px;font-weight:800;margin-bottom:8px}
+.welcome-box p{font-size:14px;color:var(--muted);line-height:1.7}
+
 /* ── TOAST ── */
 .toast{position:fixed;bottom:24px;right:24px;background:var(--text);color:#fff;padding:12px 20px;border-radius:10px;font-size:13px;font-weight:600;z-index:10001;opacity:0;transform:translateY(10px);transition:all .3s;pointer-events:none}
 .toast.show{opacity:1;transform:translateY(0)}
@@ -424,6 +432,15 @@ img{max-width:100%;display:block}
   </div>
 </div>
 
+<!-- ═══ 회원가입 환영 메시지 ═══ -->
+<div class="welcome-overlay" id="welcome-overlay">
+  <div class="welcome-box">
+    <div class="emoji">🎉</div>
+    <h3>환영합니다!</h3>
+    <p>3일 무료 체험이 시작되었습니다.<br>지금 바로 모든 기능을 체험해 보세요!</p>
+  </div>
+</div>
+
 <!-- ═══ TOAST ═══ -->
 <div class="toast" id="toast"></div>
 
@@ -564,11 +581,10 @@ async function doRegister() {
     parseToken();
     closeAuth();
     document.getElementById('trial-overlay').classList.remove('open');
-    showToast('회원가입 완료!');
-    if (pendingPricing) {
-      pendingPricing = false;
-      setTimeout(() => document.getElementById('pricing').scrollIntoView({ behavior: 'smooth' }), 300);
-    }
+    pendingPricing = false;
+    // 환영 메시지 표시 후 자동 닫기
+    document.getElementById('welcome-overlay').classList.add('open');
+    setTimeout(() => document.getElementById('welcome-overlay').classList.remove('open'), 3000);
   } catch (e) { document.getElementById('auth-err').textContent = e.message || '회원가입 실패'; }
 }
 

@@ -151,6 +151,34 @@ img{max-width:100%;display:block}
   .store-btn{width:100%;justify-content:center;max-width:260px}
 }
 
+/* ── AUTH MODAL ── */
+.auth-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px);z-index:9999;align-items:center;justify-content:center}
+.auth-overlay.open{display:flex}
+.auth-box{background:var(--surface);border-radius:var(--radius-lg);padding:32px;width:90%;max-width:380px;box-shadow:var(--shadow-lg)}
+.auth-box .logo{text-align:center;margin-bottom:24px}
+.auth-box .logo-icon{width:60px;height:60px;border-radius:16px;background:linear-gradient(135deg,var(--accent),#7C3AED);display:inline-flex;align-items:center;justify-content:center;font-size:28px;margin-bottom:10px}
+.auth-box .logo-title{font-size:22px;font-weight:800}
+.auth-box .logo-sub{font-size:12px;color:var(--muted);margin-top:4px}
+.auth-input{width:100%;padding:11px 14px;border-radius:9px;border:1px solid var(--border);background:var(--surface2);font-size:13px;margin-bottom:8px;font-family:inherit;color:var(--text)}
+.auth-input:focus{outline:none;border-color:var(--accent)}
+.auth-btn{width:100%;padding:13px;border-radius:9px;font-weight:700;font-size:14px;border:none;cursor:pointer;margin-bottom:8px;font-family:inherit}
+.auth-btn-primary{background:var(--accent);color:#fff}
+.auth-btn-primary:hover{background:var(--accent-dark)}
+.auth-btn-green{background:var(--green);color:#fff}
+.auth-btn-green:hover{opacity:0.9}
+.auth-btn-sub{background:var(--surface2);border:1px solid var(--border);color:var(--text2)}
+.auth-btn-sub:hover{border-color:var(--accent);color:var(--accent)}
+.auth-err{color:var(--red);font-size:12px;text-align:center;margin-bottom:8px}
+.auth-links{text-align:center;display:flex;gap:12px;justify-content:center;margin-top:4px}
+.auth-links span{font-size:12px;cursor:pointer}
+.auth-links .link-accent{color:var(--accent)}
+.auth-links .link-muted{color:var(--muted)}
+
+/* ── TRIAL EXPIRED MODAL ── */
+.trial-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);z-index:9998;align-items:center;justify-content:center}
+.trial-overlay.open{display:flex}
+.trial-box{background:var(--surface);border-radius:var(--radius-lg);padding:32px;width:90%;max-width:380px;text-align:center;box-shadow:var(--shadow-lg)}
+
 /* ── TOAST ── */
 .toast{position:fixed;bottom:24px;right:24px;background:var(--text);color:#fff;padding:12px 20px;border-radius:10px;font-size:13px;font-weight:600;z-index:10001;opacity:0;transform:translateY(10px);transition:all .3s;pointer-events:none}
 .toast.show{opacity:1;transform:translateY(0)}
@@ -360,6 +388,42 @@ img{max-width:100%;display:block}
   </div>
 </div>
 
+<!-- ═══ 로그인/회원가입 모달 ═══ -->
+<div class="auth-overlay" id="auth-overlay">
+  <div class="auth-box">
+    <div class="logo">
+      <div class="logo-icon">📡</div>
+      <div class="logo-title">공사인프라</div>
+      <div class="logo-sub">건설 영업의 시작</div>
+    </div>
+    <div id="auth-err" class="auth-err"></div>
+    <input id="auth-email" class="auth-input" placeholder="이메일" type="email">
+    <input id="auth-pw" class="auth-input" placeholder="비밀번호 (6자 이상)" type="password">
+    <div id="auth-register-fields" style="display:none">
+      <input id="auth-name" class="auth-input" placeholder="이름 (선택)">
+      <input id="auth-company" class="auth-input" placeholder="회사명 (선택)">
+    </div>
+    <button id="auth-login-btn" class="auth-btn auth-btn-primary" onclick="doLogin()">로그인</button>
+    <button id="auth-register-btn" class="auth-btn auth-btn-green" style="display:none" onclick="doRegister()">회원가입</button>
+    <div class="auth-links">
+      <span id="auth-toggle-link" class="link-accent" onclick="toggleAuthMode()">회원가입</span>
+      <span class="link-muted" onclick="closeAuth()">닫기</span>
+      <span class="link-muted" onclick="openPrivacy()">개인정보처리방침</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 무료 체험 종료 모달 ═══ -->
+<div class="trial-overlay" id="trial-overlay">
+  <div class="trial-box">
+    <div style="font-size:40px;margin-bottom:12px">⏰</div>
+    <div style="font-size:20px;font-weight:800;margin-bottom:8px">무료 체험이 종료되었습니다</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:24px;line-height:1.7">3일간의 무료 체험 기간이 만료되었습니다.<br>계속 이용하시려면 회원가입 후 요금제를 선택해 주세요.</div>
+    <button class="auth-btn auth-btn-primary" onclick="trialToRegister()" style="margin-bottom:8px">회원가입하고 구독하기</button>
+    <button class="auth-btn auth-btn-sub" onclick="trialToLogin()">이미 계정이 있어요</button>
+  </div>
+</div>
+
 <!-- ═══ TOAST ═══ -->
 <div class="toast" id="toast"></div>
 
@@ -404,6 +468,122 @@ document.getElementById('privacy-modal').addEventListener('click', function(e) {
   if (e.target === this) closePrivacy();
 });
 
+// ─── Auth State ───
+const LOCAL_SERVER = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+  ? 'http://localhost:3001'
+  : '';
+let authToken = localStorage.getItem('gongsainfra_token') || '';
+let currentUser = null;
+let pendingPricing = false; // 로그인 후 요금제 화면으로 이동할지
+let authMode = 'login';
+
+function isLoggedIn() {
+  if (!authToken) return false;
+  try {
+    const parts = authToken.split('.');
+    if (parts.length !== 3) return false;
+    const payload = JSON.parse(atob(parts[1]));
+    if (payload.exp && payload.exp * 1000 < Date.now()) {
+      authToken = ''; localStorage.removeItem('gongsainfra_token');
+      return false;
+    }
+    currentUser = payload;
+    return true;
+  } catch { return false; }
+}
+
+function parseToken() {
+  try {
+    const parts = authToken.split('.');
+    if (parts.length === 3) currentUser = JSON.parse(atob(parts[1]));
+  } catch {}
+}
+
+// ─── Auth Modal ───
+function showAuth(mode) {
+  authMode = mode || 'login';
+  updateAuthUI();
+  document.getElementById('auth-overlay').classList.add('open');
+  document.getElementById('auth-err').textContent = '';
+}
+function closeAuth() {
+  document.getElementById('auth-overlay').classList.remove('open');
+}
+function toggleAuthMode() {
+  authMode = authMode === 'login' ? 'register' : 'login';
+  updateAuthUI();
+  document.getElementById('auth-err').textContent = '';
+}
+function updateAuthUI() {
+  document.getElementById('auth-register-fields').style.display = authMode === 'register' ? 'block' : 'none';
+  document.getElementById('auth-login-btn').style.display = authMode === 'login' ? 'block' : 'none';
+  document.getElementById('auth-register-btn').style.display = authMode === 'register' ? 'block' : 'none';
+  document.getElementById('auth-toggle-link').textContent = authMode === 'login' ? '회원가입' : '로그인으로';
+}
+
+async function doLogin() {
+  const email = document.getElementById('auth-email').value.trim();
+  const pw = document.getElementById('auth-pw').value;
+  if (!email || !pw) { document.getElementById('auth-err').textContent = '이메일과 비밀번호를 입력하세요.'; return; }
+  try {
+    const res = await fetch(LOCAL_SERVER + '/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: pw })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || '로그인 실패');
+    authToken = data.token;
+    localStorage.setItem('gongsainfra_token', authToken);
+    parseToken();
+    closeAuth();
+    document.getElementById('trial-overlay').classList.remove('open');
+    showToast('로그인 성공!');
+    if (pendingPricing) {
+      pendingPricing = false;
+      setTimeout(() => document.getElementById('pricing').scrollIntoView({ behavior: 'smooth' }), 300);
+    }
+  } catch (e) { document.getElementById('auth-err').textContent = e.message || '로그인 실패'; }
+}
+
+async function doRegister() {
+  const email = document.getElementById('auth-email').value.trim();
+  const pw = document.getElementById('auth-pw').value;
+  const name = document.getElementById('auth-name').value.trim();
+  const company = document.getElementById('auth-company').value.trim();
+  if (!email || !pw) { document.getElementById('auth-err').textContent = '이메일과 비밀번호를 입력하세요.'; return; }
+  if (pw.length < 6) { document.getElementById('auth-err').textContent = '비밀번호는 6자 이상이어야 합니다.'; return; }
+  try {
+    const res = await fetch(LOCAL_SERVER + '/api/auth/register', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: pw, name, company })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '회원가입 실패');
+    authToken = data.token;
+    localStorage.setItem('gongsainfra_token', authToken);
+    parseToken();
+    closeAuth();
+    document.getElementById('trial-overlay').classList.remove('open');
+    showToast('회원가입 완료!');
+    if (pendingPricing) {
+      pendingPricing = false;
+      setTimeout(() => document.getElementById('pricing').scrollIntoView({ behavior: 'smooth' }), 300);
+    }
+  } catch (e) { document.getElementById('auth-err').textContent = e.message || '회원가입 실패'; }
+}
+
+// ─── Trial Expired Modal ───
+function trialToRegister() {
+  document.getElementById('trial-overlay').classList.remove('open');
+  pendingPricing = true;
+  showAuth('register');
+}
+function trialToLogin() {
+  document.getElementById('trial-overlay').classList.remove('open');
+  pendingPricing = true;
+  showAuth('login');
+}
+
 // ─── Trial ───
 function startTrial() {
   showToast('앱을 다운로드하여 3일 무료 체험을 시작하세요!');
@@ -411,11 +591,14 @@ function startTrial() {
 }
 
 // ─── Payment (토스페이먼츠) ───
-const LOCAL_SERVER = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-  ? 'http://localhost:3001'
-  : '';
-
 async function startPayment(planId) {
+  // 비로그인 시 로그인 요구
+  if (!isLoggedIn()) {
+    showToast('로그인이 필요합니다. 로그인 후 결제를 진행해 주세요.');
+    pendingPricing = true;
+    showAuth('login');
+    return;
+  }
   const PRICES = { basic: 9900, pro: 29900, team: 99000 };
   const NAMES = { basic: '베이직', pro: '프로', team: '팀' };
   const price = PRICES[planId];
@@ -434,7 +617,7 @@ async function startPayment(planId) {
       amount: price,
       orderId,
       orderName: '공사인프라 ' + NAMES[planId] + ' (월간)',
-      customerName: '사용자',
+      customerName: currentUser?.email || '사용자',
       successUrl: LOCAL_SERVER + '/payment/success?plan=' + planId,
       failUrl: LOCAL_SERVER + '/payment/fail',
     });
@@ -442,6 +625,14 @@ async function startPayment(planId) {
     if (e?.code !== 'USER_CANCEL') showToast('결제 오류: ' + (e?.message || ''));
   }
 }
+
+// ─── Auth overlay backdrop close ───
+document.getElementById('auth-overlay').addEventListener('click', function(e) {
+  if (e.target === this) closeAuth();
+});
+document.getElementById('trial-overlay').addEventListener('click', function(e) {
+  if (e.target === this) this.classList.remove('open');
+});
 
 // ─── Smooth scroll for anchor links ───
 document.querySelectorAll('a[href^="#"]').forEach(a => {

@@ -29,7 +29,7 @@ const ALLOWED_ORIGINS = [
   process.env.FRONTEND_URL,
   'http://localhost:8081', 'http://localhost:8088', 'http://localhost:19006',
 ].filter(Boolean);
-app.use(cors({ origin: (origin, cb) => { if (!origin || ALLOWED_ORIGINS.some(o => origin.startsWith(o))) cb(null, true); else cb(null, true); }, credentials: true }));
+app.use(cors({ origin: (origin, cb) => { if (!origin || ALLOWED_ORIGINS.some(o => origin.startsWith(o))) cb(null, true); else cb(new Error('CORS not allowed'), false); }, credentials: true }));
 app.use(express.json());
 const staticDir = fs.existsSync(path.join(__dirname, 'public')) ? path.join(__dirname, 'public') : __dirname;
 app.use(express.static(staticDir));
@@ -173,15 +173,20 @@ db.exec(`
 
 // 관리자 계정 자동 생성 (환경변수 설정 시에만)
 if (ADMIN_EMAIL && ADMIN_PW) {
-  const adminHash = bcrypt.hashSync(ADMIN_PW, 10);
-  const existingAdmin = db.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL);
+  const existingAdmin = db.prepare('SELECT id, password FROM users WHERE email = ?').get(ADMIN_EMAIL);
   if (!existingAdmin) {
+    const adminHash = bcrypt.hashSync(ADMIN_PW, 10);
     db.prepare('INSERT INTO users (email,password,name,company,plan,role) VALUES (?,?,?,?,?,?)')
       .run(ADMIN_EMAIL, adminHash, '관리자', '공사인프라', 'enterprise', 'admin');
     console.log('관리자 계정 생성:', ADMIN_EMAIL);
-  } else {
+  } else if (!bcrypt.compareSync(ADMIN_PW, existingAdmin.password)) {
+    // 비밀번호가 변경된 경우에만 해시 재생성
+    const adminHash = bcrypt.hashSync(ADMIN_PW, 10);
     db.prepare('UPDATE users SET password=?, plan=?, role=? WHERE email=?')
       .run(adminHash, 'enterprise', 'admin', ADMIN_EMAIL);
+  } else {
+    db.prepare('UPDATE users SET plan=?, role=? WHERE email=?')
+      .run('enterprise', 'admin', ADMIN_EMAIL);
   }
 } else {
   console.warn('ADMIN_EMAIL/ADMIN_PASSWORD 환경변수가 설정되지 않았습니다.');
@@ -190,9 +195,9 @@ if (ADMIN_EMAIL && ADMIN_PW) {
 // 게스트 계정 자동 생성
 {
   const guestEmail = 'guest@gongsainfra.com';
-  const guestPw = bcrypt.hashSync('guest1234', 10);
   const existingGuest = db.prepare('SELECT id FROM users WHERE email=?').get(guestEmail);
   if (!existingGuest) {
+    const guestPw = bcrypt.hashSync('guest1234', 10);
     db.prepare('INSERT INTO users (email,password,name,company,plan,role) VALUES (?,?,?,?,?,?)').run(guestEmail, guestPw, '게스트', '', 'free', 'member');
     console.log('게스트 계정 생성:', guestEmail);
   }
@@ -870,7 +875,19 @@ function siteKey(item) {
 }
 
 const CACHE_FILE = path.join(DATA_DIR, 'cache_sites.json');
-function loadCache() { try { return fs.existsSync(CACHE_FILE) ? JSON.parse(fs.readFileSync(CACHE_FILE,'utf-8')) : null; } catch { return null; } }
+let _memCache = null;
+let _memCacheMtime = 0;
+function loadCache() {
+  try {
+    if (!fs.existsSync(CACHE_FILE)) return null;
+    const stat = fs.statSync(CACHE_FILE);
+    const mtime = stat.mtimeMs;
+    if (_memCache && mtime === _memCacheMtime) return _memCache;
+    _memCache = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf-8'));
+    _memCacheMtime = mtime;
+    return _memCache;
+  } catch { return null; }
+}
 
 let isCollecting = false;
 let collectStats = { success:0, fail:0, errors:{} };
@@ -1008,7 +1025,9 @@ async function collectAll() {
   console.log(`\n📊 성공:${collectStats.success} 실패:${collectStats.fail}`);
   if (allItems.length>0) {
     const prev = loadCache();
-    fs.writeFileSync(CACHE_FILE,JSON.stringify({updatedAt:new Date().toISOString(),totalCount:allItems.length,items:allItems}));
+    const cacheData = {updatedAt:new Date().toISOString(),totalCount:allItems.length,items:allItems};
+    fs.writeFileSync(CACHE_FILE, JSON.stringify(cacheData));
+    _memCache = cacheData; _memCacheMtime = fs.statSync(CACHE_FILE).mtimeMs;
     console.log(`✅ ${allItems.length}건 저장\n`);
     if (prev && allItems.length > prev.totalCount) {
       broadcastNewSites(allItems.length - prev.totalCount);
@@ -1122,20 +1141,22 @@ app.post('/api/payment/confirm', authRequired, async (req, res) => {
 // 결제 성공 리다이렉트 처리 (GET)
 app.get('/payment/success', (req, res) => {
   const { plan, paymentKey, orderId, amount } = req.query;
-  // XSS 방지: JSON.stringify로 안전하게 직렬화
   const safeData = JSON.stringify({ plan, paymentKey, orderId, amount });
-  const frontendUrl = process.env.FRONTEND_URL || '';
-  res.send(`<html><head><meta charset="utf-8"><title>결제 완료</title>
+  // frontendUrl은 환경변수에서만 허용 (쿼리 파라미터 주입 방지)
+  const frontendUrl = (process.env.FRONTEND_URL || '').replace(/['"<>]/g, '');
+  const redirectTo = frontendUrl || '/';
+  res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>결제 완료</title>
   <script>
     localStorage.setItem('pendingPayment', ${JSON.stringify(safeData)});
-    window.location.href = '${frontendUrl || '/'}';
+    window.location.href = ${JSON.stringify(redirectTo)};
   </script></head><body>결제 처리 중...</body></html>`);
 });
 
 app.get('/payment/fail', (req, res) => {
-  const frontendUrl = process.env.FRONTEND_URL || '';
-  res.send(`<html><head><meta charset="utf-8"><title>결제 실패</title>
-  <script>window.location.href = '${frontendUrl || '/'}';</script></head><body>결제가 취소되었습니다.</body></html>`);
+  const frontendUrl = (process.env.FRONTEND_URL || '').replace(/['"<>]/g, '');
+  const redirectTo = frontendUrl || '/';
+  res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>결제 실패</title>
+  <script>window.location.href = ${JSON.stringify(redirectTo)};</script></head><body>결제가 취소되었습니다.</body></html>`);
 });
 
 // ══ 엑셀(CSV) 다운로드 API (PRO 이상)

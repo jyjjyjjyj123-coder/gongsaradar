@@ -50,6 +50,7 @@ db.exec(`
     company TEXT NOT NULL DEFAULT '',
     plan TEXT NOT NULL DEFAULT 'free',
     plan_until TEXT,
+    role TEXT NOT NULL DEFAULT 'member',
     created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
   );
   CREATE TABLE IF NOT EXISTS favs (
@@ -175,12 +176,12 @@ if (ADMIN_EMAIL && ADMIN_PW) {
   const adminHash = bcrypt.hashSync(ADMIN_PW, 10);
   const existingAdmin = db.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL);
   if (!existingAdmin) {
-    db.prepare('INSERT INTO users (email,password,name,company,plan) VALUES (?,?,?,?,?)')
-      .run(ADMIN_EMAIL, adminHash, '관리자', '공사인프라', 'enterprise');
+    db.prepare('INSERT INTO users (email,password,name,company,plan,role) VALUES (?,?,?,?,?,?)')
+      .run(ADMIN_EMAIL, adminHash, '관리자', '공사인프라', 'enterprise', 'admin');
     console.log('관리자 계정 생성:', ADMIN_EMAIL);
   } else {
-    db.prepare('UPDATE users SET password=?, plan=? WHERE email=?')
-      .run(adminHash, 'enterprise', ADMIN_EMAIL);
+    db.prepare('UPDATE users SET password=?, plan=?, role=? WHERE email=?')
+      .run(adminHash, 'enterprise', 'admin', ADMIN_EMAIL);
   }
 } else {
   console.warn('ADMIN_EMAIL/ADMIN_PASSWORD 환경변수가 설정되지 않았습니다.');
@@ -272,8 +273,8 @@ app.post('/api/auth/register', async (req, res) => {
   if (password.length < 6) return res.status(400).json({ error: '비밀번호는 6자 이상이어야 합니다.' });
   if (db.prepare('SELECT id FROM users WHERE email=?').get(email)) return res.status(409).json({ error: '이미 사용 중인 이메일입니다.' });
   const r = db.prepare('INSERT INTO users (email,password,name,company) VALUES (?,?,?,?)').run(email, bcrypt.hashSync(password,10), name||'', company||'');
-  const user = db.prepare('SELECT id,email,name,company,plan FROM users WHERE id=?').get(r.lastInsertRowid);
-  res.json({ token: jwt.sign({ id:user.id, email:user.email, plan:user.plan }, JWT_SECRET, { expiresIn:'30d' }), user });
+  const user = db.prepare('SELECT id,email,name,company,plan,role FROM users WHERE id=?').get(r.lastInsertRowid);
+  res.json({ token: jwt.sign({ id:user.id, email:user.email, plan:user.plan, role:user.role }, JWT_SECRET, { expiresIn:'30d' }), user });
 });
 
 app.post('/api/auth/login', (req, res) => {
@@ -283,7 +284,7 @@ app.post('/api/auth/login', (req, res) => {
   const effectivePlan = resolveUserPlan(user.id);
   const { password:_, ...safe } = user;
   safe.plan = effectivePlan;
-  res.json({ token: jwt.sign({ id:user.id, email:user.email, plan:effectivePlan }, JWT_SECRET, { expiresIn:'30d' }), user: safe });
+  res.json({ token: jwt.sign({ id:user.id, email:user.email, plan:effectivePlan, role:user.role||'member' }, JWT_SECRET, { expiresIn:'30d' }), user: safe });
 });
 
 app.get('/api/auth/me', authRequired, (req, res) => {
@@ -1097,8 +1098,8 @@ app.post('/api/payment/confirm', authRequired, async (req, res) => {
       }
     }
 
-    const user = db.prepare('SELECT id,email,name,company,plan,plan_until FROM users WHERE id=?').get(req.user.id);
-    const newToken = jwt.sign({ id:user.id, email:user.email, plan:user.plan }, JWT_SECRET, { expiresIn:'30d' });
+    const user = db.prepare('SELECT id,email,name,company,plan,plan_until,role FROM users WHERE id=?').get(req.user.id);
+    const newToken = jwt.sign({ id:user.id, email:user.email, plan:user.plan, role:user.role||'member' }, JWT_SECRET, { expiresIn:'30d' });
     res.json({ ok: true, token: newToken, user });
 
   } catch(e) {

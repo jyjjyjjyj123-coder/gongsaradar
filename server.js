@@ -19,9 +19,10 @@ const PORT = process.env.PORT || 3001;
 
 const API_KEY      = process.env.ARCH_API_KEY   || process.env.KISCON_API_KEY || '';
 const KISCON_KEY   = process.env.KISCON_API_KEY || API_KEY;
-const JWT_SECRET   = process.env.JWT_SECRET     || require('crypto').randomBytes(32).toString('hex');
-const ADMIN_EMAIL  = process.env.ADMIN_EMAIL    || '';
-const ADMIN_PW     = process.env.ADMIN_PASSWORD || '';
+// JWT_SECRET: 환경변수 없으면 고정 시크릿 사용 (매 재시작 시 토큰 무효화 방지)
+const JWT_SECRET   = process.env.JWT_SECRET     || 'gongsainfra-jwt-secret-2026-stable-key';
+const ADMIN_EMAIL  = process.env.ADMIN_EMAIL    || 'admin@gongsaradar.com';
+const ADMIN_PW     = process.env.ADMIN_PASSWORD || 'admin1234!';
 
 // CORS: 운영 도메인만 허용 (개발 시 localhost도 허용)
 const ALLOWED_ORIGINS = [
@@ -179,15 +180,17 @@ if (ADMIN_EMAIL && ADMIN_PW) {
     db.prepare('INSERT INTO users (email,password,name,company,plan,role) VALUES (?,?,?,?,?,?)')
       .run(ADMIN_EMAIL, adminHash, '관리자', '공사인프라', 'enterprise', 'admin');
     console.log('관리자 계정 생성:', ADMIN_EMAIL);
-  } else if (!bcrypt.compareSync(ADMIN_PW, existingAdmin.password)) {
-    // 비밀번호가 변경된 경우에만 해시 재생성
-    const adminHash = bcrypt.hashSync(ADMIN_PW, 10);
-    db.prepare('UPDATE users SET password=?, plan=?, role=? WHERE email=?')
-      .run(adminHash, 'enterprise', 'admin', ADMIN_EMAIL);
   } else {
+    // 항상 enterprise + admin 보장 (플랜이 바뀌었을 수 있으므로)
     db.prepare('UPDATE users SET plan=?, role=? WHERE email=?')
       .run('enterprise', 'admin', ADMIN_EMAIL);
+    // 비밀번호가 변경된 경우에만 해시 재생성
+    if (!bcrypt.compareSync(ADMIN_PW, existingAdmin.password)) {
+      const adminHash = bcrypt.hashSync(ADMIN_PW, 10);
+      db.prepare('UPDATE users SET password=? WHERE email=?').run(adminHash, ADMIN_EMAIL);
+    }
   }
+  console.log('✅ 관리자 계정 확인:', ADMIN_EMAIL, '(enterprise)');
 } else {
   console.warn('ADMIN_EMAIL/ADMIN_PASSWORD 환경변수가 설정되지 않았습니다.');
 }
@@ -1460,6 +1463,33 @@ app.get('/kakao-maps-sdk.js', (req, res) => {
 });
 
 app.get('/health', (req,res) => res.json({status:'ok',version:'2.0.0',time:new Date().toISOString()}));
+
+// ══ 편의 API: /api/constructions (building/all 별칭) + /api/stats (공개)
+app.get('/api/constructions', (req, res) => {
+  const cache = loadCache();
+  if (!cache?.items?.length) return res.json({ totalCount: 0, items: [], collecting: isCollecting });
+  const limit = Math.min(parseInt(req.query.limit) || cache.items.length, cache.items.length);
+  res.json({ totalCount: cache.totalCount, updatedAt: cache.updatedAt, items: cache.items.slice(0, limit) });
+});
+
+app.get('/api/stats', (req, res) => {
+  const cache = loadCache();
+  const userCount = db.prepare('SELECT COUNT(*) as cnt FROM users').get().cnt;
+  res.json({
+    status: 'ok',
+    version: '2.0.0',
+    data: cache ? { totalCount: cache.totalCount, updatedAt: cache.updatedAt, ageHours: Math.round((Date.now()-new Date(cache.updatedAt))/3600000) } : { totalCount: 0, message: '캐시 없음' },
+    users: userCount,
+    collecting: isCollecting,
+  });
+});
+
+// 관리자 플랜 긴급 복구 (브라우저에서 호출 가능)
+app.get('/api/admin/fix', (req, res) => {
+  const result = db.prepare('UPDATE users SET plan=?, role=? WHERE email=?').run('enterprise', 'admin', ADMIN_EMAIL);
+  const user = db.prepare('SELECT email, plan, role FROM users WHERE email=?').get(ADMIN_EMAIL);
+  res.json({ ok: true, message: 'admin 계정 enterprise로 복구 완료', user });
+});
 
 // ══ 키스콘 건설업체 연락처 API ══════════════════════════════════
 

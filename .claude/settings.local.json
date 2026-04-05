@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s http://localhost:3001/api/health)",
+      "Bash(curl -s --max-time 10 https://gongsaradar-production.up.railway.app/api/health)",
+      "Bash(curl -s --max-time 10 -H \"Accept: application/json\" https://gongsaradar-production.up.railway.app/api/health)",
+      "Bash(curl:*)",
+      "Bash(npx eas:*)",
+      "Bash(wsl:*)",
+      "Bash(ls:*)"
+    ]
+  }
+}

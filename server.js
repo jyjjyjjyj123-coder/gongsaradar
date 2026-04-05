@@ -1357,9 +1357,8 @@ app.get('/api/building/all', authRequired, (req, res) => {
   const cache = loadCache();
   if (cache?.items?.length > 0) {
     const plan = resolveUserPlan(req.user.id);
-    // free: 10건/일, 반경1km만 (프론트에서 처리)
-    // basic 이상: 전체
-    const items = plan === 'free' ? cache.items.slice(0, 500) : cache.items;
+    // 모든 플랜에 전체 데이터 제공 (기능 제한은 프론트에서 처리)
+    const items = cache.items;
     // 일일 list_views 증가
     incrementUsage(req.user.id, 'list_views');
     const usage = getUsageToday(req.user.id);
@@ -1426,6 +1425,47 @@ app.get('/api/cache/status', authRequired, (req, res) => {
   res.json({cached:true,totalCount:c.totalCount,updatedAt:c.updatedAt,ageMinutes:Math.round((Date.now()-new Date(c.updatedAt))/60000),collecting:isCollecting,collectStats});
 });
 
+
+// ══ 카카오맵 WebView용 HTML 페이지
+app.get('/map', (req, res) => {
+  const { key, lat, lng, level, markers, myLat, myLng } = req.query;
+  if (!key) return res.status(400).send('appkey required');
+  const centerLat = lat || 37.5547;
+  const centerLng = lng || 126.9707;
+  const mapLevel = level || 8;
+  const markersData = markers || '[]';
+  
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>*{margin:0;padding:0}body{overflow:hidden}#map{width:100%;height:100vh}
+.legend{position:fixed;bottom:10px;left:10px;background:rgba(255,255,255,0.95);border-radius:8px;padding:8px;font-size:10px;border:1px solid rgba(0,0,0,0.1);z-index:5}
+.legend div{display:flex;align-items:center;gap:6px;margin:3px 0}
+.dot{width:8px;height:8px;border-radius:50%}
+</style>
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=${key}&libraries=services,clusterer&autoload=false"></script>
+</head><body><div id="map"></div>
+<div class="legend">
+<div><span class="dot" style="background:#F59E0B"></span>⚡ 골조</div>
+<div><span class="dot" style="background:#2563EB"></span>🏗️ 착공</div>
+<div><span class="dot" style="background:#6366F1"></span>📋 인허가</div>
+</div>
+<script>
+kakao.maps.load(function(){
+  var map=new kakao.maps.Map(document.getElementById('map'),{center:new kakao.maps.LatLng(${centerLat},${centerLng}),level:${mapLevel}});
+  var colors={'골조':'#F59E0B','착공':'#2563EB','인허가완료':'#6366F1'};
+  try{
+    var markers=JSON.parse(decodeURIComponent('${encodeURIComponent(markersData)}'));
+    markers.forEach(function(m){
+      new kakao.maps.CustomOverlay({
+        content:'<div style="width:10px;height:10px;border-radius:50%;background:'+(colors[m.stage]||'#999')+';border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>',
+        position:new kakao.maps.LatLng(m.lat,m.lng),map:map,zIndex:1
+      });
+    });
+  }catch(e){console.error(e)}
+  ${req.query.myLat ? `new kakao.maps.CustomOverlay({content:'<div style="background:#22C55E;color:#fff;padding:4px 10px;border-radius:14px;font-size:11px;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,0.15)">📍 내 위치</div>',position:new kakao.maps.LatLng(${req.query.myLat},${req.query.myLng||126.9707}),map:map,zIndex:10});` : ''}
+});
+</script></body></html>`);
+});
 
 // ══ 카카오맵 SDK 프록시 (Railway에서 dapi.kakao.com 직접 접근 불가 시 우회)
 app.get('/kakao-maps-sdk.js', (req, res) => {

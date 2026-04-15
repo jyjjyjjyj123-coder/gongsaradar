@@ -4,6 +4,7 @@
   "description": "공사인프라 — 건설 영업 인텔리전스",
   "main": "server.js",
   "scripts": {
+    "build": "npm rebuild better-sqlite3",
     "start": "node server.js",
     "dev": "node server.js",
     "cap:sync": "npx cap sync",

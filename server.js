@@ -1,5 +1,5 @@
 /**
- * 공사레이더 서버 v2.0
+ * 공사인프라 서버 v2.0
  * - JWT 인증, SQLite DB, 구독 플랜, 건축인허가 API
  */
 require('dotenv').config();
@@ -11,17 +11,26 @@ const fs       = require('fs');
 const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
 const Database = require('better-sqlite3');
+const cron     = require('node-cron');
+const nodemailer = require('nodemailer');
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
-const API_KEY      = process.env.ARCH_API_KEY   || '703732760a8517b24a58c87adb138c1a544b0f971e87144d5d08eda4ef0029d8';
+const API_KEY      = process.env.ARCH_API_KEY   || process.env.KISCON_API_KEY || '';
 const KISCON_KEY   = process.env.KISCON_API_KEY || API_KEY;
-const JWT_SECRET   = process.env.JWT_SECRET     || 'gongsaradar-secret-2024-super-safe';
+// JWT_SECRET: 환경변수 없으면 고정 시크릿 사용 (매 재시작 시 토큰 무효화 방지)
+const JWT_SECRET   = process.env.JWT_SECRET     || 'gongsainfra-jwt-secret-2026-stable-key';
 const ADMIN_EMAIL  = process.env.ADMIN_EMAIL    || 'admin@gongsaradar.com';
 const ADMIN_PW     = process.env.ADMIN_PASSWORD || 'admin1234!';
 
-app.use(cors({ origin: true, credentials: true }));
+// CORS: 운영 도메인만 허용 (개발 시 localhost도 허용)
+const ALLOWED_ORIGINS = [
+  'https://gongsaradar-production.up.railway.app',
+  process.env.FRONTEND_URL,
+  'http://localhost:8081', 'http://localhost:8088', 'http://localhost:19006',
+].filter(Boolean);
+app.use(cors({ origin: (origin, cb) => { if (!origin || ALLOWED_ORIGINS.some(o => origin.startsWith(o))) cb(null, true); else cb(new Error('CORS not allowed'), false); }, credentials: true }));
 app.use(express.json());
 const staticDir = fs.existsSync(path.join(__dirname, 'public')) ? path.join(__dirname, 'public') : __dirname;
 app.use(express.static(staticDir));
@@ -42,6 +51,7 @@ db.exec(`
     company TEXT NOT NULL DEFAULT '',
     plan TEXT NOT NULL DEFAULT 'free',
     plan_until TEXT,
+    role TEXT NOT NULL DEFAULT 'member',
     created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
   );
   CREATE TABLE IF NOT EXISTS favs (
@@ -162,18 +172,59 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_contractor_reports_site ON contractor_reports(construction_id);
 `);
 
-// 관리자 계정 자동 생성
-// 관리자 계정 항상 upsert (재배포 시에도 비밀번호 환경변수 적용)
-const adminHash = bcrypt.hashSync(ADMIN_PW, 10);
-const existingAdmin = db.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL);
-if (!existingAdmin) {
-  db.prepare('INSERT INTO users (email,password,name,company,plan) VALUES (?,?,?,?,?)')
-    .run(ADMIN_EMAIL, adminHash, '관리자', '공사레이더', 'enterprise');
-  console.log('👤 관리자 계정 생성:', ADMIN_EMAIL);
+// 관리자 계정 자동 생성 (환경변수 설정 시에만)
+if (ADMIN_EMAIL && ADMIN_PW) {
+  const existingAdmin = db.prepare('SELECT id, password FROM users WHERE email = ?').get(ADMIN_EMAIL);
+  if (!existingAdmin) {
+    const adminHash = bcrypt.hashSync(ADMIN_PW, 10);
+    db.prepare('INSERT INTO users (email,password,name,company,plan,role) VALUES (?,?,?,?,?,?)')
+      .run(ADMIN_EMAIL, adminHash, '관리자', '공사인프라', 'enterprise', 'admin');
+    console.log('관리자 계정 생성:', ADMIN_EMAIL);
+  } else {
+    // 항상 enterprise + admin 보장 (플랜이 바뀌었을 수 있으므로)
+    db.prepare('UPDATE users SET plan=?, role=? WHERE email=?')
+      .run('enterprise', 'admin', ADMIN_EMAIL);
+    // 비밀번호가 변경된 경우에만 해시 재생성
+    if (!bcrypt.compareSync(ADMIN_PW, existingAdmin.password)) {
+      const adminHash = bcrypt.hashSync(ADMIN_PW, 10);
+      db.prepare('UPDATE users SET password=? WHERE email=?').run(adminHash, ADMIN_EMAIL);
+    }
+  }
+  console.log('✅ 관리자 계정 확인:', ADMIN_EMAIL, '(enterprise)');
 } else {
-  // 재배포 시 비밀번호 동기화
-  db.prepare('UPDATE users SET password=?, plan=? WHERE email=?')
-    .run(adminHash, 'enterprise', ADMIN_EMAIL);
+  console.warn('ADMIN_EMAIL/ADMIN_PASSWORD 환경변수가 설정되지 않았습니다.');
+}
+
+// 게스트 계정 자동 생성
+{
+  const guestEmail = 'guest@gongsainfra.com';
+  const existingGuest = db.prepare('SELECT id FROM users WHERE email=?').get(guestEmail);
+  if (!existingGuest) {
+    const guestPw = bcrypt.hashSync('guest1234', 10);
+    db.prepare('INSERT INTO users (email,password,name,company,plan,role) VALUES (?,?,?,?,?,?)').run(guestEmail, guestPw, '게스트', '', 'free', 'member');
+    console.log('게스트 계정 생성:', guestEmail);
+  }
+}
+
+// 테스트 계정 자동 생성 (토스페이먼츠 심사용)
+{
+  const testEmail = 'test@barobom.com';
+  const testPw = 'test1234!';
+  const existingTest = db.prepare('SELECT id, password FROM users WHERE email=?').get(testEmail);
+  if (!existingTest) {
+    const hash = bcrypt.hashSync(testPw, 10);
+    db.prepare('INSERT INTO users (email,password,name,company,plan,role) VALUES (?,?,?,?,?,?)').run(testEmail, hash, '테스트 사용자', '바로봄', 'pro', 'member');
+    console.log('✅ 테스트 계정 생성:', testEmail);
+  } else {
+    // 항상 pro 플랜으로 보장 + 비밀번호 동기화
+    if (!bcrypt.compareSync(testPw, existingTest.password)) {
+      const hash = bcrypt.hashSync(testPw, 10);
+      db.prepare('UPDATE users SET password=?, plan=? WHERE email=?').run(hash, 'pro', testEmail);
+    } else {
+      db.prepare('UPDATE users SET plan=? WHERE email=?').run('pro', testEmail);
+    }
+    console.log('✅ 테스트 계정 확인:', testEmail, '(pro)');
+  }
 }
 
 // ── JWT 미들웨어
@@ -212,6 +263,8 @@ function getUsageToday(userId) {
   return row;
 }
 function incrementUsage(userId, field) {
+  const VALID_FIELDS = ['list_views', 'detail_views', 'search_count'];
+  if (!VALID_FIELDS.includes(field)) return;
   const today = new Date().toISOString().slice(0, 10);
   db.prepare(`INSERT INTO daily_usage (user_id, date, ${field}) VALUES (?, ?, 1) ON CONFLICT(user_id, date) DO UPDATE SET ${field} = ${field} + 1`).run(userId, today);
 }
@@ -260,8 +313,8 @@ app.post('/api/auth/register', async (req, res) => {
   if (password.length < 6) return res.status(400).json({ error: '비밀번호는 6자 이상이어야 합니다.' });
   if (db.prepare('SELECT id FROM users WHERE email=?').get(email)) return res.status(409).json({ error: '이미 사용 중인 이메일입니다.' });
   const r = db.prepare('INSERT INTO users (email,password,name,company) VALUES (?,?,?,?)').run(email, bcrypt.hashSync(password,10), name||'', company||'');
-  const user = db.prepare('SELECT id,email,name,company,plan FROM users WHERE id=?').get(r.lastInsertRowid);
-  res.json({ token: jwt.sign({ id:user.id, email:user.email, plan:user.plan }, JWT_SECRET, { expiresIn:'30d' }), user });
+  const user = db.prepare('SELECT id,email,name,company,plan,role FROM users WHERE id=?').get(r.lastInsertRowid);
+  res.json({ token: jwt.sign({ id:user.id, email:user.email, plan:user.plan, role:user.role }, JWT_SECRET, { expiresIn:'30d' }), user });
 });
 
 app.post('/api/auth/login', (req, res) => {
@@ -271,7 +324,7 @@ app.post('/api/auth/login', (req, res) => {
   const effectivePlan = resolveUserPlan(user.id);
   const { password:_, ...safe } = user;
   safe.plan = effectivePlan;
-  res.json({ token: jwt.sign({ id:user.id, email:user.email, plan:effectivePlan }, JWT_SECRET, { expiresIn:'30d' }), user: safe });
+  res.json({ token: jwt.sign({ id:user.id, email:user.email, plan:effectivePlan, role:user.role||'member' }, JWT_SECRET, { expiresIn:'30d' }), user: safe });
 });
 
 app.get('/api/auth/me', authRequired, (req, res) => {
@@ -289,6 +342,7 @@ app.put('/api/auth/me', authRequired, (req, res) => {
 app.put('/api/auth/password', authRequired, (req, res) => {
   const { current, next: newPw } = req.body;
   const user = db.prepare('SELECT password FROM users WHERE id=?').get(req.user.id);
+  if (!user) return res.status(404).json({ error: '사용자를 찾을 수 없습니다.' });
   if (!bcrypt.compareSync(current, user.password)) return res.status(401).json({ error: '현재 비밀번호가 틀렸습니다.' });
   if (!newPw || newPw.length < 6) return res.status(400).json({ error: '새 비밀번호는 6자 이상이어야 합니다.' });
   db.prepare('UPDATE users SET password=? WHERE id=?').run(bcrypt.hashSync(newPw,10), req.user.id);
@@ -394,6 +448,50 @@ app.post('/api/admin/set-plan', authRequired, planRequired('enterprise'), (req, 
 });
 app.get('/api/admin/users', authRequired, planRequired('enterprise'), (req, res) => {
   res.json({ users: db.prepare('SELECT id,email,name,company,plan,plan_until,created_at FROM users ORDER BY created_at DESC').all() });
+});
+
+// 유저 플랜 수동 변경
+app.put('/api/admin/user-plan', authRequired, planRequired('enterprise'), (req, res) => {
+  const { userId, plan, days } = req.body;
+  if (!userId || !plan) return res.status(400).json({ error: 'userId, plan 필수' });
+  const until = days ? new Date(Date.now() + days * 86400000).toISOString().slice(0, 10) : null;
+  db.prepare('UPDATE users SET plan=?, plan_until=? WHERE id=?').run(plan, until, userId);
+  res.json({ ok: true });
+});
+
+// 관리자 통계
+app.get('/api/admin/stats', authRequired, planRequired('enterprise'), (req, res) => {
+  const total = db.prepare('SELECT COUNT(*) as cnt FROM users').get().cnt;
+  const today = new Date().toISOString().slice(0, 10);
+  const todayNew = db.prepare("SELECT COUNT(*) as cnt FROM users WHERE created_at >= ?").get(today + 'T00:00:00').cnt;
+
+  const plans = db.prepare("SELECT plan, COUNT(*) as cnt FROM users GROUP BY plan").all();
+  const planCounts = { free: 0, basic: 0, pro: 0, team: 0, enterprise: 0 };
+  plans.forEach(r => { planCounts[r.plan] = r.cnt; });
+
+  const revenue = (planCounts.basic * 9900) + (planCounts.pro * 29900) + (planCounts.team * 99000);
+
+  // 최근 7일 가입 추이
+  const week = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const ds = d.toISOString().slice(0, 10);
+    const cnt = db.prepare("SELECT COUNT(*) as cnt FROM users WHERE created_at >= ? AND created_at < ?")
+      .get(ds + 'T00:00:00', ds + 'T23:59:59').cnt;
+    week.push({ date: ds, count: cnt });
+  }
+
+  res.json({ total, todayNew, planCounts, revenue, week });
+});
+
+// 구독 현황
+app.get('/api/admin/subscriptions', authRequired, planRequired('enterprise'), (req, res) => {
+  const active = db.prepare(`
+    SELECT u.id, u.email, u.name, u.plan, u.plan_until, s.amount, s.payment_key, s.started_at
+    FROM users u LEFT JOIN subscriptions s ON u.id = s.user_id AND s.status = 'active'
+    WHERE u.plan != 'free' ORDER BY u.plan_until ASC
+  `).all();
+  res.json({ subscriptions: active });
 });
 
 // ══ 건축인허가 데이터
@@ -728,9 +826,10 @@ function isValidItem(item) {
   return true;
 }
 
-function callApiEndpoint(endpoint, serviceKey, sigunguCd, bjdongCd, numOfRows) {
+function callApiEndpoint(endpoint, serviceKey, sigunguCd, bjdongCd, numOfRows, pageNo) {
+  pageNo = pageNo || 1;
   return new Promise((resolve, reject) => {
-    const query = '?serviceKey='+serviceKey+'&sigunguCd='+sigunguCd+'&bjdongCd='+bjdongCd+'&numOfRows='+numOfRows+'&pageNo=1&_type=json';
+    const query = '?serviceKey='+serviceKey+'&sigunguCd='+sigunguCd+'&bjdongCd='+bjdongCd+'&numOfRows='+numOfRows+'&pageNo='+pageNo+'&_type=json';
     const req = https.get({ hostname:'apis.data.go.kr', path:'/1613000/ArchPmsHubService/'+endpoint+query, headers:{'Accept':'application/json','User-Agent':'GongsaRadar/2.0'}, timeout:15000 }, (apiRes) => {
       let data = '';
       apiRes.on('data', c => { data += c; });
@@ -744,6 +843,30 @@ function callApiEndpoint(endpoint, serviceKey, sigunguCd, bjdongCd, numOfRows) {
     req.on('error', e=>reject(new Error('NET:'+e.message)));
     req.on('timeout', ()=>{ req.destroy(); reject(new Error('TIMEOUT')); });
   });
+}
+
+// 모든 페이지를 순회하여 전체 아이템 수집
+async function callApiAllPages(endpoint, serviceKey, sigunguCd, bjdongCd, numOfRows) {
+  numOfRows = numOfRows || 100;
+  let allItems = [];
+  let pageNo = 1;
+  let totalCount = 0;
+  while (true) {
+    const json = await callApiEndpoint(endpoint, serviceKey, sigunguCd, bjdongCd, String(numOfRows), pageNo);
+    const header = json?.response?.header || json?.header;
+    const body = json?.response?.body || json?.body;
+    if (header?.resultCode !== '00') break;
+    totalCount = Number(body?.totalCount || 0);
+    if (totalCount === 0) break;
+    const items = body?.items?.item;
+    if (!items) break;
+    const list = Array.isArray(items) ? items : [items];
+    allItems = allItems.concat(list);
+    if (allItems.length >= totalCount || list.length < numOfRows) break;
+    pageNo++;
+    await new Promise(r => setTimeout(r, 80));
+  }
+  return allItems;
 }
 
 function callApi(serviceKey, sigunguCd, bjdongCd, numOfRows) {
@@ -776,24 +899,33 @@ function siteKey(item) {
 }
 
 const CACHE_FILE = path.join(DATA_DIR, 'cache_sites.json');
-function loadCache() { try { return fs.existsSync(CACHE_FILE) ? JSON.parse(fs.readFileSync(CACHE_FILE,'utf-8')) : null; } catch { return null; } }
+let _memCache = null;
+let _memCacheMtime = 0;
+function loadCache() {
+  try {
+    if (!fs.existsSync(CACHE_FILE)) return null;
+    const stat = fs.statSync(CACHE_FILE);
+    const mtime = stat.mtimeMs;
+    if (_memCache && mtime === _memCacheMtime) return _memCache;
+    _memCache = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf-8'));
+    _memCacheMtime = mtime;
+    return _memCache;
+  } catch { return null; }
+}
 
 let isCollecting = false;
 let collectStats = { success:0, fail:0, errors:{} };
 
 async function collectAll() {
   if (isCollecting) return;
-  isCollecting = true; collectStats = { success:0, fail:0, errors:{} };
+  isCollecting = true; collectStats = { success:0, fail:0, empty:0, errors:{}, emptyRegions:[] };
   console.log('\n🔄 전국 데이터 수집 시작... (총', BJDONG_LIST.length, '개 지역)');
   let allItems = [];
   for (let i=0; i<BJDONG_LIST.length; i++) {
     const {s,b} = BJDONG_LIST[i];
     try {
-      const json = await callApi(API_KEY, s, b, '100');
-      const header = json?.response?.header||json?.header, body = json?.response?.body||json?.body;
-      if (header?.resultCode !== '00') { collectStats.fail++; continue; }
-      const items = body?.items?.item; if (!items) continue;
-      const list = Array.isArray(items)?items:[items];
+      const list = await callApiAllPages('getApBasisOulnInfo', API_KEY, s, b, 100);
+      if (list.length === 0) { collectStats.empty++; collectStats.emptyRegions.push({s,b}); continue; }
       allItems = allItems.concat(list.filter(isValidItem).map(addCoords));
       collectStats.success++;
       process.stdout.write(`\r📦 ${allItems.length}건 (${i+1}/${BJDONG_LIST.length})...`);
@@ -804,7 +936,7 @@ async function collectAll() {
     }
     await new Promise(r=>setTimeout(r,100));
   }
-  console.log(`\n📊 기본수집 완료 - 성공:${collectStats.success} 실패:${collectStats.fail} (${allItems.length}건)`);
+  console.log(`\n📊 기본수집 완료 - 성공:${collectStats.success} 빈지역:${collectStats.empty} 실패:${collectStats.fail} (${allItems.length}건)`);
 
   // ── 2단계: 추가 API (주택/층별/부속건축물) 병합 ──
   if (allItems.length > 0) {
@@ -917,7 +1049,9 @@ async function collectAll() {
   console.log(`\n📊 성공:${collectStats.success} 실패:${collectStats.fail}`);
   if (allItems.length>0) {
     const prev = loadCache();
-    fs.writeFileSync(CACHE_FILE,JSON.stringify({updatedAt:new Date().toISOString(),totalCount:allItems.length,items:allItems}));
+    const cacheData = {updatedAt:new Date().toISOString(),totalCount:allItems.length,items:allItems};
+    fs.writeFileSync(CACHE_FILE, JSON.stringify(cacheData));
+    _memCache = cacheData; _memCacheMtime = fs.statSync(CACHE_FILE).mtimeMs;
     console.log(`✅ ${allItems.length}건 저장\n`);
     if (prev && allItems.length > prev.totalCount) {
       broadcastNewSites(allItems.length - prev.totalCount);
@@ -949,7 +1083,8 @@ app.post('/api/payment/confirm', authRequired, async (req, res) => {
 
   try {
     // 토스페이먼츠 결제 승인 (실제 서비스 시 시크릿 키 필요)
-    const SECRET_KEY = process.env.TOSS_SECRET_KEY || 'test_sk_D5GePWvyJnrK0W0k6q8gLzN97Eoq';
+    const SECRET_KEY = process.env.TOSS_SECRET_KEY;
+    if (!SECRET_KEY) return res.status(500).json({ error: '결제 설정이 완료되지 않았습니다. 관리자에게 문의하세요.' });
     const authHeader = 'Basic ' + Buffer.from(SECRET_KEY + ':').toString('base64');
 
     const tossRes = await new Promise((resolve, reject) => {
@@ -971,11 +1106,37 @@ app.post('/api/payment/confirm', authRequired, async (req, res) => {
       return res.status(400).json({ error: err.message || '결제 승인 실패' });
     }
 
-    // 플랜 업그레이드
+    // 플랜 업그레이드 (잔여일 이월)
     const planMap = { 'basic': 'basic', 'pro': 'pro', 'team': 'team', 'enterprise': 'enterprise' };
     const newPlan = planMap[plan] || 'basic';
-    const until = new Date(); until.setMonth(until.getMonth() + 1);
-    const untilStr = until.toISOString().slice(0,10);
+    const PLAN_RANK = { free: 0, basic: 1, pro: 2, team: 3, enterprise: 4 };
+
+    // 현재 유저 정보 조회
+    const curUser = db.prepare('SELECT plan, plan_until FROM users WHERE id=?').get(req.user.id);
+    const curPlan = curUser?.plan || 'free';
+    const curUntil = curUser?.plan_until ? new Date(curUser.plan_until) : null;
+
+    // 동일 플랜 중복 결제 방지
+    if (curPlan === newPlan && curUntil && curUntil > new Date()) {
+      return res.status(400).json({ error: `이미 ${newPlan} 플랜이 ${curUser.plan_until}까지 활성화되어 있습니다.` });
+    }
+
+    // 잔여일 계산 (업그레이드 시 기존 남은 일수 이월)
+    let carryoverDays = 0;
+    if (curUntil && curUntil > new Date() && (PLAN_RANK[curPlan] || 0) < (PLAN_RANK[newPlan] || 0)) {
+      const remainMs = curUntil.getTime() - Date.now();
+      carryoverDays = Math.max(0, Math.floor(remainMs / (1000 * 60 * 60 * 24)));
+    }
+
+    // 새 만료일 = 오늘 + 30일 + 잔여일
+    const until = new Date();
+    until.setDate(until.getDate() + 30 + carryoverDays);
+    const untilStr = until.toISOString().slice(0, 10);
+
+    // 기존 구독 비활성화
+    db.prepare('UPDATE subscriptions SET status=? WHERE user_id=? AND status=?')
+      .run('replaced', req.user.id, 'active');
+
     db.prepare('UPDATE users SET plan=?, plan_until=? WHERE id=?')
       .run(newPlan, untilStr, req.user.id);
 
@@ -991,8 +1152,8 @@ app.post('/api/payment/confirm', authRequired, async (req, res) => {
       }
     }
 
-    const user = db.prepare('SELECT id,email,name,company,plan,plan_until FROM users WHERE id=?').get(req.user.id);
-    const newToken = jwt.sign({ id:user.id, email:user.email, plan:user.plan }, JWT_SECRET, { expiresIn:'30d' });
+    const user = db.prepare('SELECT id,email,name,company,plan,plan_until,role FROM users WHERE id=?').get(req.user.id);
+    const newToken = jwt.sign({ id:user.id, email:user.email, plan:user.plan, role:user.role||'member' }, JWT_SECRET, { expiresIn:'30d' });
     res.json({ ok: true, token: newToken, user });
 
   } catch(e) {
@@ -1004,17 +1165,309 @@ app.post('/api/payment/confirm', authRequired, async (req, res) => {
 // 결제 성공 리다이렉트 처리 (GET)
 app.get('/payment/success', (req, res) => {
   const { plan, paymentKey, orderId, amount } = req.query;
-  res.send(`<html><head><meta charset="utf-8"><title>결제 완료</title>
+  const safeData = JSON.stringify({ plan, paymentKey, orderId, amount });
+  // frontendUrl은 환경변수에서만 허용 (쿼리 파라미터 주입 방지)
+  const frontendUrl = (process.env.FRONTEND_URL || '').replace(/['"<>]/g, '');
+  const redirectTo = frontendUrl || '/';
+  res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>결제 완료</title>
   <script>
-    // 결제 정보를 앱으로 전달하고 메인으로 리다이렉트
-    localStorage.setItem('pendingPayment', JSON.stringify({plan:'${plan}',paymentKey:'${paymentKey}',orderId:'${orderId}',amount:'${amount}'}));
-    window.location.href = '/';
+    localStorage.setItem('pendingPayment', ${JSON.stringify(safeData)});
+    window.location.href = ${JSON.stringify(redirectTo)};
   </script></head><body>결제 처리 중...</body></html>`);
 });
 
 app.get('/payment/fail', (req, res) => {
-  res.send(`<html><head><meta charset="utf-8"><title>결제 실패</title>
-  <script>window.location.href = '/';</script></head><body>결제가 취소되었습니다.</body></html>`);
+  const frontendUrl = (process.env.FRONTEND_URL || '').replace(/['"<>]/g, '');
+  const redirectTo = frontendUrl || '/';
+  res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>결제 실패</title>
+  <script>window.location.href = ${JSON.stringify(redirectTo)};</script></head><body>결제가 취소되었습니다.</body></html>`);
+});
+
+// ══ 엑셀(CSV) 다운로드 API (PRO 이상)
+app.get('/api/export/excel', authRequired, planRequired('pro'), (req, res) => {
+  const cache = loadCache();
+  if (!cache?.items?.length) return res.status(404).json({ error: '데이터 없음' });
+
+  const BOM = '\uFEFF';
+  const headers = ['현장명','주소','용도','공정단계','연면적(㎡)','지상층','지하층','허가일','착공일'];
+  const rows = cache.items.slice(0, 10000).map(s => {
+    const name = (s.bldNm || s.platPlcNm || '').replace(/"/g, '""');
+    const addr = (s.platPlcNm || s.platPlc || s.newPlatPlc || '').replace(/"/g, '""');
+    const type = (s.mainPurpsCdNm || '').replace(/"/g, '""');
+    const stage = s.useAprDay ? '준공' : (s.realStcnsDay || s.stcnsSchedDay) ? '착공' : s.archPmsDay ? '인허가' : '-';
+    const area = parseFloat(s.totArea || s.archArea || 0) || '';
+    const grnd = s.grndFlrCnt || '';
+    const ugrnd = s.ugrndFlrCnt || '';
+    const pms = s.archPmsDay || s.pmsDay || '';
+    const stcns = s.realStcnsDay || s.stcnsSchedDay || s.stcnsDay || '';
+    return `"${name}","${addr}","${type}","${stage}",${area},${grnd},${ugrnd},"${pms}","${stcns}"`;
+  });
+
+  const csv = BOM + headers.join(',') + '\n' + rows.join('\n');
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="gongsainfra_${today}.csv"`);
+  res.send(csv);
+});
+
+// ══ 요금제 페이지
+app.get('/pricing', (req, res) => {
+  res.send(`<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>요금제 - 공사인프라</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;background:#f8fafc;color:#1e293b;line-height:1.6}
+.container{max-width:1200px;margin:0 auto;padding:40px 20px}
+.header{text-align:center;margin-bottom:48px}
+h1{font-size:32px;color:#1e293b;margin-bottom:12px;font-weight:800}
+.subtitle{color:#64748b;font-size:16px}
+.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:24px;margin-bottom:48px}
+.plan{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:32px 24px;position:relative;transition:transform 0.2s}
+.plan:hover{transform:translateY(-4px);box-shadow:0 8px 24px rgba(0,0,0,0.08)}
+.plan.popular{border:2px solid #4F6CFF;box-shadow:0 8px 24px rgba(79,108,255,0.15)}
+.badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:#4F6CFF;color:#fff;font-size:11px;font-weight:700;padding:5px 12px;border-radius:12px}
+.plan-name{font-size:18px;font-weight:700;margin-bottom:8px}
+.plan-desc{font-size:13px;color:#64748b;margin-bottom:20px;min-height:20px}
+.price{font-size:32px;font-weight:800;color:#4F6CFF;margin-bottom:4px}
+.price-unit{font-size:14px;color:#64748b;margin-bottom:24px}
+.features{list-style:none;margin-bottom:24px}
+.features li{padding:8px 0;font-size:13px;color:#475569;display:flex;align-items:flex-start;gap:8px}
+.features li:before{content:'✓';color:#22C55E;font-weight:700;flex-shrink:0}
+.features li.locked{color:#94a3b8}
+.features li.locked:before{content:'✕';color:#cbd5e1}
+.notice{background:#fff;border-radius:16px;padding:32px;margin-bottom:24px;border:1px solid #e2e8f0}
+.notice h2{font-size:18px;color:#1e293b;margin-bottom:16px}
+.notice ul{padding-left:20px;color:#475569;font-size:14px}
+.notice li{margin-bottom:8px}
+.footer{text-align:center;padding:32px 20px;border-top:1px solid #e2e8f0;margin-top:32px;color:#64748b;font-size:12px;line-height:1.8}
+.footer a{color:#4F6CFF;text-decoration:none;margin:0 8px}
+</style></head><body>
+<div class="container">
+  <div class="header">
+    <h1>요금제 안내</h1>
+    <p class="subtitle">건설 영업에 필요한 모든 기능, 합리적인 가격에 만나보세요</p>
+  </div>
+
+  <div class="plans">
+    <div class="plan">
+      <div class="plan-name">무료 체험</div>
+      <div class="plan-desc">서비스를 먼저 경험해 보세요</div>
+      <div class="price">₩0</div>
+      <div class="price-unit">3일 무료</div>
+      <ul class="features">
+        <li>주변 신축 공사현장 검색</li>
+        <li>현장 목록 하루 20건</li>
+        <li>상세정보 하루 5건</li>
+        <li>단계별 즐겨찾기</li>
+        <li class="locked">검색/필터 기능</li>
+        <li class="locked">메모/일정 저장</li>
+      </ul>
+    </div>
+
+    <div class="plan popular">
+      <div class="badge">인기</div>
+      <div class="plan-name">베이직</div>
+      <div class="plan-desc">개인 영업에 필요한 핵심 기능</div>
+      <div class="price">₩9,900</div>
+      <div class="price-unit">월 / VAT 포함</div>
+      <ul class="features">
+        <li>전국 무제한 조회</li>
+        <li>검색/필터 사용</li>
+        <li>즐겨찾기 무제한</li>
+        <li>영업노트·메모 무제한</li>
+        <li>일정관리</li>
+        <li>SNS 공유 (카카오톡)</li>
+      </ul>
+    </div>
+
+    <div class="plan">
+      <div class="plan-name">프로</div>
+      <div class="plan-desc">영업 성과를 극대화하는 프로 기능</div>
+      <div class="price">₩29,900</div>
+      <div class="price-unit">월 / VAT 포함</div>
+      <ul class="features">
+        <li>베이직 모든 기능</li>
+        <li>현장 신뢰도 검증 정보</li>
+        <li>엑셀 다운로드</li>
+        <li>신규 현장 이메일 알림</li>
+        <li>카카오 로드뷰 연동</li>
+        <li>우선 고객 지원</li>
+      </ul>
+    </div>
+
+    <div class="plan">
+      <div class="plan-name">팀</div>
+      <div class="plan-desc">팀 단위 영업 관리의 완성</div>
+      <div class="price">₩99,000</div>
+      <div class="price-unit">월 / VAT 포함</div>
+      <ul class="features">
+        <li>프로 모든 기능</li>
+        <li>5인 팀 공유</li>
+        <li>팀 메모 공유</li>
+        <li>담당 현장 배분</li>
+        <li>전담 매니저 지원</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="notice">
+    <h2>💳 결제 안내</h2>
+    <ul>
+      <li>모든 가격은 부가세(VAT) 포함 금액입니다.</li>
+      <li>결제는 토스페이먼츠를 통해 안전하게 처리됩니다.</li>
+      <li>신용카드, 체크카드, 계좌이체, 카카오페이, 네이버페이 사용 가능합니다.</li>
+      <li>월 자동결제 방식으로 매월 동일 일자에 자동 청구됩니다.</li>
+      <li>구독은 언제든지 해지 가능하며, 해지 시 다음 결제일 전까지 서비스가 유지됩니다.</li>
+      <li>환불 정책은 <a href="/refund" style="color:#4F6CFF">환불정책 페이지</a>를 확인해 주세요.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="footer">
+  <strong>바로봄</strong> | 대표자: 장용준 | 사업자등록번호: 614-35-01469<br>
+  사업장 주소: 인천광역시 서구 청라한울로 96, 324동 2105호 (청라동, 청라제일풍경채2차에듀앤파크)<br>
+  연락처: 010-3789-2708 | 이메일: ev_networks@naver.com<br>
+  <a href="/">홈</a> | <a href="/pricing">요금제</a> | <a href="/refund">환불정책</a> | <a href="/privacy">개인정보처리방침</a>
+</div>
+</body></html>`);
+});
+
+// ══ 환불정책 페이지
+app.get('/refund', (req, res) => {
+  res.send(`<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>환불정책 - 공사인프라</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;max-width:800px;margin:0 auto;padding:32px 20px;line-height:1.8;color:#1e293b;background:#f8fafc}
+h1{font-size:28px;border-bottom:3px solid #4F6CFF;padding-bottom:12px;margin-bottom:24px}
+h2{font-size:18px;margin-top:32px;color:#4F6CFF;font-weight:700}
+p,li{font-size:14px;color:#475569;margin-bottom:6px}
+ul,ol{padding-left:24px;margin-bottom:12px}
+.box{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:24px;margin:20px 0}
+.warn{background:#FEF3C7;border-color:#FCD34D;color:#92400E}
+.footer{text-align:center;padding:32px 20px;border-top:1px solid #e2e8f0;margin-top:48px;color:#64748b;font-size:12px;line-height:1.8}
+.footer a{color:#4F6CFF;text-decoration:none;margin:0 8px}
+</style></head><body>
+
+<h1>환불정책</h1>
+
+<p>바로봄(이하 "회사")의 공사인프라 서비스 환불 정책은 「전자상거래 등에서의 소비자보호에 관한 법률」 및 관련 법령을 준수하여 다음과 같이 정합니다.</p>
+
+<h2>1. 무료 체험</h2>
+<div class="box">
+  <ul>
+    <li>모든 신규 회원은 회원가입 후 3일간 무료 체험이 제공됩니다.</li>
+    <li>무료 체험 기간 동안에는 결제가 발생하지 않으며, 별도 환불 사항이 없습니다.</li>
+    <li>체험 종료 후 자동으로 결제가 진행되지 않습니다. 유료 플랜은 사용자가 직접 결제해야 활성화됩니다.</li>
+  </ul>
+</div>
+
+<h2>2. 유료 구독 환불 기준</h2>
+<div class="box">
+  <p><strong>① 결제 후 7일 이내 청약 철회</strong></p>
+  <ul>
+    <li>결제 후 7일 이내이고, 서비스를 이용한 이력이 없는 경우 전액 환불 가능합니다.</li>
+    <li>이미 서비스를 이용한 경우(로그인, 데이터 조회, 다운로드 등) 일부 또는 전액 환불이 제한될 수 있습니다.</li>
+  </ul>
+
+  <p style="margin-top:16px"><strong>② 결제 후 7일 이후 ~ 한 달 이내 환불</strong></p>
+  <ul>
+    <li>월 구독료 - (일할 사용 금액) 기준으로 잔여 일수에 해당하는 금액을 환불합니다.</li>
+    <li>일할 계산식: 월 구독료 ÷ 30일 × 사용 일수</li>
+    <li>예시: 9,900원 베이직 플랜을 10일 사용 후 해지 → 환불액 = 9,900 - (9,900 ÷ 30 × 10) = 6,600원</li>
+  </ul>
+
+  <p style="margin-top:16px"><strong>③ 다음 결제일 도래 후 (정기 결제 갱신 후)</strong></p>
+  <ul>
+    <li>이미 갱신된 결제분에 대해서는 동일하게 일할 계산하여 환불 가능합니다.</li>
+    <li>중도 해지 시 잔여 기간만큼 환불받거나, 기간이 끝날 때까지 사용 후 자동 종료를 선택할 수 있습니다.</li>
+  </ul>
+</div>
+
+<h2>3. 환불 불가 사유</h2>
+<div class="box warn">
+  <ul>
+    <li>이용자의 단순 변심으로 인한 환불 요청 중 7일이 경과한 건 (이용 이력이 있는 경우)</li>
+    <li>회원 약관 위반으로 강제 탈퇴된 경우</li>
+    <li>이용자의 부정 사용(계정 공유, 데이터 무단 복제 등)이 확인된 경우</li>
+    <li>무료 체험 기간 중 환불 (결제 발생 없음)</li>
+  </ul>
+</div>
+
+<h2>4. 환불 절차</h2>
+<div class="box">
+  <ol>
+    <li>이메일(ev_networks@naver.com) 또는 유선번호(010-3789-2708)로 환불 신청</li>
+    <li>신청 시 다음 정보를 제공해 주세요:
+      <ul>
+        <li>가입 이메일 주소</li>
+        <li>결제 일자 및 결제 금액</li>
+        <li>환불 요청 사유</li>
+      </ul>
+    </li>
+    <li>접수 후 영업일 기준 3일 이내 환불 처리 (결제 수단에 따라 환불 완료까지 추가 영업일 소요 가능)</li>
+    <li>환불은 결제 수단과 동일한 방법으로 환급됩니다 (카드 결제는 카드 취소, 계좌이체는 계좌 환급).</li>
+  </ol>
+</div>
+
+<h2>5. 구독 해지 방법</h2>
+<div class="box">
+  <ul>
+    <li>앱 내 설정 → 구독 관리 → 구독 해지 메뉴에서 즉시 해지 가능합니다.</li>
+    <li>해지 신청 시 다음 결제일이 도래하지 않으며, 결제된 기간까지 정상 이용 가능합니다.</li>
+    <li>해지 후에도 잔여 기간 동안 환불을 원하시면 위 환불 절차에 따라 신청해 주세요.</li>
+  </ul>
+</div>
+
+<h2>6. 결제 대행사</h2>
+<p>모든 결제는 토스페이먼츠(주)를 통해 처리되며, 결제 정보는 회사가 직접 보관하지 않습니다.</p>
+
+<h2>7. 분쟁 해결</h2>
+<p>환불 관련 분쟁이 발생할 경우 회사와 이용자 간 합의로 해결하며, 합의가 어려운 경우 「전자상거래 등에서의 소비자보호에 관한 법률」 및 「소비자기본법」에 따라 한국소비자원의 분쟁조정 절차를 따릅니다.</p>
+
+<h2>8. 시행일</h2>
+<p>본 환불 정책은 2026년 4월 1일부터 시행됩니다.</p>
+
+<div class="footer">
+  <strong>바로봄</strong> | 대표자: 장용준 | 사업자등록번호: 614-35-01469<br>
+  사업장 주소: 인천광역시 서구 청라한울로 96, 324동 2105호 (청라동, 청라제일풍경채2차에듀앤파크)<br>
+  연락처: 010-3789-2708 | 이메일: ev_networks@naver.com<br>
+  <a href="/">홈</a> | <a href="/pricing">요금제</a> | <a href="/refund">환불정책</a> | <a href="/privacy">개인정보처리방침</a>
+</div>
+</body></html>`);
+});
+
+// ══ 개인정보처리방침
+app.get('/privacy', (req, res) => {
+  res.send(`<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>개인정보처리방침 - 공사인프라</title>
+<style>body{font-family:-apple-system,sans-serif;max-width:720px;margin:0 auto;padding:24px;line-height:1.8;color:#1e293b;background:#f8fafc}
+h1{font-size:22px;border-bottom:2px solid #4F6CFF;padding-bottom:8px}h2{font-size:16px;margin-top:28px;color:#4F6CFF}
+p,li{font-size:14px;color:#475569}</style></head><body>
+<h1>개인정보처리방침</h1>
+<p>바로봄 (이하 "회사")는 「개인정보 보호법」에 따라 이용자의 개인정보를 보호하고 이와 관련한 고충을 신속하게 처리하기 위하여 다음과 같이 개인정보처리방침을 수립·공개합니다.</p>
+
+<h2>1. 수집하는 개인정보 항목</h2>
+<ul><li>필수: 이메일 주소, 비밀번호(암호화 저장)</li><li>선택: 이름, 회사명</li><li>결제 시: 결제 정보 (토스페이먼츠에 위탁 처리, 회사는 카드번호를 저장하지 않음)</li><li>자동 수집: 서비스 이용 기록, 접속 IP</li></ul>
+
+<h2>2. 수집 목적</h2>
+<ul><li>서비스 제공 및 회원 관리</li><li>구독 플랜 관리 및 결제 처리</li><li>신규 현장 이메일 알림 발송 (프로 플랜 이상)</li><li>서비스 개선 및 통계 분석</li></ul>
+
+<h2>3. 보유 및 이용 기간</h2>
+<ul><li>회원 탈퇴 시까지 (탈퇴 즉시 DB에서 삭제)</li><li>결제 기록: 전자상거래법에 따라 5년 보관</li></ul>
+
+<h2>4. 제3자 제공</h2>
+<ul><li>토스페이먼츠(주): 결제 처리 목적</li><li>국토교통부 공공데이터포털: 건축인허가 정보 조회 (개인정보 제공 아님)</li><li>그 외 제3자에게 개인정보를 제공하지 않습니다.</li></ul>
+
+<h2>5. 개인정보의 파기</h2>
+<p>회원 탈퇴 시 지체 없이 데이터베이스에서 완전 삭제합니다.</p>
+
+<h2>6. 개인정보보호 책임자</h2>
+<ul><li>상호명: 바로봄</li><li>대표자: 장용준</li><li>사업자등록번호: 614-35-01469</li><li>사업장 주소: 인천광역시 서구 청라한울로 96, 324동 2105호(청라동, 청라제일풍경채2차에듀앤파크)</li><li>연락처: 010-3789-2708</li><li>서비스명: 공사인프라</li></ul>
+
+<h2>7. 시행일</h2>
+<p>이 개인정보처리방침은 2026년 4월 1일부터 시행됩니다.</p>
+</body></html>`);
 });
 
 // 관리자 플랜 수동 변경 API
@@ -1152,9 +1605,8 @@ app.get('/api/building/all', authRequired, (req, res) => {
   const cache = loadCache();
   if (cache?.items?.length > 0) {
     const plan = resolveUserPlan(req.user.id);
-    // free: 10건/일, 반경1km만 (프론트에서 처리)
-    // basic 이상: 전체
-    const items = plan === 'free' ? cache.items.slice(0, 500) : cache.items;
+    // 모든 플랜에 전체 데이터 제공 (기능 제한은 프론트에서 처리)
+    const items = cache.items;
     // 일일 list_views 증가
     incrementUsage(req.user.id, 'list_views');
     const usage = getUsageToday(req.user.id);
@@ -1222,6 +1674,47 @@ app.get('/api/cache/status', authRequired, (req, res) => {
 });
 
 
+// ══ 카카오맵 WebView용 HTML 페이지
+app.get('/map', (req, res) => {
+  const { key, lat, lng, level, markers, myLat, myLng } = req.query;
+  if (!key) return res.status(400).send('appkey required');
+  const centerLat = lat || 37.5547;
+  const centerLng = lng || 126.9707;
+  const mapLevel = level || 8;
+  const markersData = markers || '[]';
+  
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>*{margin:0;padding:0}body{overflow:hidden}#map{width:100%;height:100vh}
+.legend{position:fixed;bottom:10px;left:10px;background:rgba(255,255,255,0.95);border-radius:8px;padding:8px;font-size:10px;border:1px solid rgba(0,0,0,0.1);z-index:5}
+.legend div{display:flex;align-items:center;gap:6px;margin:3px 0}
+.dot{width:8px;height:8px;border-radius:50%}
+</style>
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=${key}&libraries=services,clusterer&autoload=false"></script>
+</head><body><div id="map"></div>
+<div class="legend">
+<div><span class="dot" style="background:#F59E0B"></span>⚡ 골조</div>
+<div><span class="dot" style="background:#2563EB"></span>🏗️ 착공</div>
+<div><span class="dot" style="background:#6366F1"></span>📋 인허가</div>
+</div>
+<script>
+kakao.maps.load(function(){
+  var map=new kakao.maps.Map(document.getElementById('map'),{center:new kakao.maps.LatLng(${centerLat},${centerLng}),level:${mapLevel}});
+  var colors={'골조':'#F59E0B','착공':'#2563EB','인허가완료':'#6366F1'};
+  try{
+    var markers=JSON.parse(decodeURIComponent('${encodeURIComponent(markersData)}'));
+    markers.forEach(function(m){
+      new kakao.maps.CustomOverlay({
+        content:'<div style="width:10px;height:10px;border-radius:50%;background:'+(colors[m.stage]||'#999')+';border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>',
+        position:new kakao.maps.LatLng(m.lat,m.lng),map:map,zIndex:1
+      });
+    });
+  }catch(e){console.error(e)}
+  ${req.query.myLat ? `new kakao.maps.CustomOverlay({content:'<div style="background:#22C55E;color:#fff;padding:4px 10px;border-radius:14px;font-size:11px;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,0.15)">📍 내 위치</div>',position:new kakao.maps.LatLng(${req.query.myLat},${req.query.myLng||126.9707}),map:map,zIndex:10});` : ''}
+});
+</script></body></html>`);
+});
+
 // ══ 카카오맵 SDK 프록시 (Railway에서 dapi.kakao.com 직접 접근 불가 시 우회)
 app.get('/kakao-maps-sdk.js', (req, res) => {
   const appkey = req.query.appkey || '';
@@ -1258,6 +1751,33 @@ app.get('/kakao-maps-sdk.js', (req, res) => {
 });
 
 app.get('/health', (req,res) => res.json({status:'ok',version:'2.0.0',time:new Date().toISOString()}));
+
+// ══ 편의 API: /api/constructions (building/all 별칭) + /api/stats (공개)
+app.get('/api/constructions', (req, res) => {
+  const cache = loadCache();
+  if (!cache?.items?.length) return res.json({ totalCount: 0, items: [], collecting: isCollecting });
+  const limit = Math.min(parseInt(req.query.limit) || cache.items.length, cache.items.length);
+  res.json({ totalCount: cache.totalCount, updatedAt: cache.updatedAt, items: cache.items.slice(0, limit) });
+});
+
+app.get('/api/stats', (req, res) => {
+  const cache = loadCache();
+  const userCount = db.prepare('SELECT COUNT(*) as cnt FROM users').get().cnt;
+  res.json({
+    status: 'ok',
+    version: '2.0.0',
+    data: cache ? { totalCount: cache.totalCount, updatedAt: cache.updatedAt, ageHours: Math.round((Date.now()-new Date(cache.updatedAt))/3600000) } : { totalCount: 0, message: '캐시 없음' },
+    users: userCount,
+    collecting: isCollecting,
+  });
+});
+
+// 관리자 플랜 긴급 복구 (브라우저에서 호출 가능)
+app.get('/api/admin/fix', (req, res) => {
+  const result = db.prepare('UPDATE users SET plan=?, role=? WHERE email=?').run('enterprise', 'admin', ADMIN_EMAIL);
+  const user = db.prepare('SELECT email, plan, role FROM users WHERE email=?').get(ADMIN_EMAIL);
+  res.json({ ok: true, message: 'admin 계정 enterprise로 복구 완료', user });
+});
 
 // ══ 키스콘 건설업체 연락처 API ══════════════════════════════════
 
@@ -1345,20 +1865,20 @@ app.get('/api/contractor', authRequired, planRequired('pro'), async (req, res) =
 app.get('/api/contractor/site/:siteId', authRequired, planRequired('pro'), async (req, res) => {
   const { siteId } = req.params;
   try {
-    // 캐시에서 현장 정보 찾기
-    const cache = loadCache();
-    const site = cache?.items?.find(i => String(i.mgmPmsrgstPk) === siteId || String(i._id) === siteId);
-    let contractorData = null;
-    if (site) {
-      const contractorName = site.archGbCdNm || site.bldNm || '';
-      if (contractorName) contractorData = await getContractorContact(contractorName);
-    }
     // 사용자 제보 연락처
     const reports = db.prepare(
-      `SELECT contact_name, phone, role, memo, created_at FROM contractor_reports
+      `SELECT contact_name, phone, role, memo, verified, created_at FROM contractor_reports
        WHERE construction_id = ? ORDER BY verified DESC, created_at DESC LIMIT 10`
     ).all(siteId);
-    res.json({ contractor: contractorData, reports });
+    // 검증된 제보에서 대표 연락처 추출
+    const verified = reports.find(r => r.verified === 1);
+    const contractor = verified ? {
+      name: verified.contact_name,
+      phone: verified.phone,
+      ceo: verified.role || '',
+      address: verified.memo || '',
+    } : null;
+    res.json({ contractor, reports });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1400,10 +1920,180 @@ app.put('/api/admin/contractor/reports/:id/verify', authRequired, planRequired('
 
 // ══ 끝: 키스콘 연락처 API ════════════════════════════════════════
 
+// ══ 이메일 알림 시스템 ═══════════════════════════════════════════
+
+// 알림 설정 테이블
+db.exec(`CREATE TABLE IF NOT EXISTS alert_settings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER UNIQUE,
+  enabled INTEGER DEFAULT 0,
+  email TEXT DEFAULT '',
+  regions TEXT DEFAULT '[]',
+  types TEXT DEFAULT '[]',
+  min_area INTEGER DEFAULT 0,
+  time TEXT DEFAULT '08:00',
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+)`);
+
+// 이메일 트랜스포터
+const createMailTransporter = () => {
+  if (!process.env.GMAIL_USER || !process.env.GMAIL_PASS) return null;
+  return nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_PASS },
+  });
+};
+
+// 알림 설정 조회
+app.get('/api/alert/settings', authRequired, (req, res) => {
+  const row = db.prepare('SELECT * FROM alert_settings WHERE user_id=?').get(req.user.id);
+  if (!row) return res.json({ settings: { enabled: false, email: '', regions: [], types: [], minArea: 0, time: '08:00' } });
+  res.json({ settings: {
+    enabled: !!row.enabled,
+    email: row.email,
+    regions: JSON.parse(row.regions || '[]'),
+    types: JSON.parse(row.types || '[]'),
+    minArea: row.min_area || 0,
+    time: row.time || '08:00',
+  }});
+});
+
+// 알림 설정 저장
+app.post('/api/alert/settings', authRequired, (req, res) => {
+  const plan = resolveUserPlan(req.user.id);
+  if (!['pro','team','enterprise'].includes(plan)) return res.status(403).json({ error: '프로 플랜 이상 필요' });
+  const { enabled, email, regions, types, minArea, time } = req.body;
+  const existing = db.prepare('SELECT id FROM alert_settings WHERE user_id=?').get(req.user.id);
+  if (existing) {
+    db.prepare('UPDATE alert_settings SET enabled=?, email=?, regions=?, types=?, min_area=?, time=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?')
+      .run(enabled ? 1 : 0, email || '', JSON.stringify(regions || []), JSON.stringify(types || []), minArea || 0, time || '08:00', req.user.id);
+  } else {
+    db.prepare('INSERT INTO alert_settings (user_id, enabled, email, regions, types, min_area, time) VALUES (?,?,?,?,?,?,?)')
+      .run(req.user.id, enabled ? 1 : 0, email || '', JSON.stringify(regions || []), JSON.stringify(types || []), minArea || 0, time || '08:00');
+  }
+  res.json({ ok: true });
+});
+
+// 신규 현장 알림 발송 함수
+async function sendDailyAlert() {
+  const transporter = createMailTransporter();
+  if (!transporter) { console.log('[Alert] 이메일 설정 없음 (GMAIL_USER/GMAIL_PASS)'); return; }
+
+  // 캐시에서 전날 추가된 현장 조회
+  const cache = loadCache();
+  if (!cache?.items?.length) return;
+
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yStr = yesterday.toISOString().slice(0, 10).replace(/-/g, '');
+
+  const newSites = cache.items.filter(item => {
+    const pmsDay = (item.archPmsDay || item.pmsDay || '').replace(/[^0-9]/g, '').slice(0, 8);
+    return pmsDay === yStr;
+  });
+
+  if (newSites.length === 0) { console.log('[Alert] 신규 현장 없음 — 발송 건너뜀'); return; }
+
+  // pro/team/enterprise 유저 중 알림 활성화된 유저 조회
+  const alertUsers = db.prepare(`
+    SELECT u.id, u.email, u.plan, a.email as alert_email, a.regions, a.types, a.min_area
+    FROM users u JOIN alert_settings a ON u.id = a.user_id
+    WHERE a.enabled = 1 AND u.plan IN ('pro','team','enterprise')
+  `).all();
+
+  for (const user of alertUsers) {
+    try {
+      const regions = JSON.parse(user.regions || '[]');
+      const types = JSON.parse(user.types || '[]');
+      const minArea = user.min_area || 0;
+
+      // 유저별 필터 적용
+      let filtered = [...newSites];
+      if (regions.length > 0) {
+        filtered = filtered.filter(s => {
+          const addr = s.platPlcNm || s.platPlc || s.newPlatPlc || '';
+          return regions.some(r => addr.includes(r));
+        });
+      }
+      if (types.length > 0) {
+        filtered = filtered.filter(s => types.some(t => (s.mainPurpsCdNm || '').includes(t)));
+      }
+      if (minArea > 0) {
+        filtered = filtered.filter(s => parseFloat(s.totArea || s.archArea || 0) >= minArea);
+      }
+
+      if (filtered.length === 0) continue;
+
+      const top5 = filtered.slice(0, 5);
+      const siteList = top5.map((s, i) =>
+        `${i+1}. ${s.bldNm || s.platPlcNm || '이름없음'}\n   주소: ${s.platPlcNm || s.platPlc || '-'}\n   용도: ${s.mainPurpsCdNm || '-'}\n   면적: ${parseFloat(s.totArea || s.archArea || 0).toLocaleString()}㎡`
+      ).join('\n\n');
+
+      const toEmail = user.alert_email || user.email;
+      await transporter.sendMail({
+        from: `"공사인프라" <${process.env.GMAIL_USER}>`,
+        to: toEmail,
+        subject: `[공사인프라] 신규 현장 ${filtered.length}건 알림 (${yesterday.toISOString().slice(0,10)})`,
+        text: `안녕하세요, 공사인프라입니다.\n\n어제 새로 허가된 현장 ${filtered.length}건을 알려드립니다.\n\n${siteList}\n\n${filtered.length > 5 ? `... 외 ${filtered.length - 5}건\n\n` : ''}공사인프라에서 전체 목록을 확인하세요.\nhttps://gongsaradar-production.up.railway.app`,
+      });
+      console.log(`[Alert] ${toEmail} → ${filtered.length}건 발송 완료`);
+    } catch (e) {
+      console.error(`[Alert] ${user.email} 발송 실패:`, e.message);
+    }
+  }
+}
+
+// 매일 오전 8시 KST (UTC 23:00 전날) 실행
+cron.schedule('0 23 * * *', () => {
+  console.log('[Cron] 매일 알림 발송 시작');
+  sendDailyAlert().catch(e => console.error('[Cron] 알림 발송 실패:', e.message));
+});
+
+// 테스트 알림 발송 엔드포인트
+app.post('/api/test/send-alert', authRequired, async (req, res) => {
+  const plan = resolveUserPlan(req.user.id);
+  if (plan !== 'enterprise') return res.status(403).json({ error: 'enterprise 플랜만 가능' });
+
+  const transporter = createMailTransporter();
+  if (!transporter) return res.status(500).json({ ok: false, message: 'GMAIL_USER/GMAIL_PASS 환경변수가 설정되지 않았습니다.' });
+
+  try {
+    const cache = loadCache();
+    const sampleSites = (cache?.items || []).slice(0, 3);
+    const siteList = sampleSites.map((s, i) =>
+      `${i+1}. ${s.bldNm || s.platPlcNm || '이름없음'} — ${s.mainPurpsCdNm || '-'} / ${parseFloat(s.totArea || s.archArea || 0).toLocaleString()}㎡`
+    ).join('\n');
+
+    const alertRow = db.prepare('SELECT email FROM alert_settings WHERE user_id=?').get(req.user.id);
+    const toEmail = alertRow?.email || req.user.email;
+
+    await transporter.sendMail({
+      from: `"공사인프라" <${process.env.GMAIL_USER}>`,
+      to: toEmail,
+      subject: '[공사인프라] 테스트 알림 발송',
+      text: `이것은 공사인프라 이메일 알림 테스트입니다.\n\n샘플 현장 ${sampleSites.length}건:\n${siteList}\n\n정상적으로 수신되었다면 알림 기능이 작동합니다.`,
+    });
+
+    res.json({ ok: true, message: `${toEmail}로 테스트 알림 발송 완료` });
+  } catch (e) {
+    res.status(500).json({ ok: false, message: '발송 실패: ' + e.message });
+  }
+});
+
+// ══ 끝: 이메일 알림 시스템 ═══════════════════════════════════════
+
+// ══ SPA 폴백 (API 외 모든 경로 → index.html)
+app.get('*', (req, res) => {
+  const indexPath = path.join(staticDir, 'index.html');
+  if (fs.existsSync(indexPath)) res.sendFile(indexPath);
+  else res.status(404).send('Not Found');
+});
+
 // ══ 서버 시작
 app.listen(PORT, async () => {
   console.log('\n╔══════════════════════════════════╗');
-  console.log('║   공사레이더 서버 v2.0 실행!     ║');
+  console.log('║   공사인프라 서버 v2.0 실행!     ║');
   console.log('╚══════════════════════════════════╝');
   console.log('👉 http://localhost:' + PORT);
   const cache = loadCache();

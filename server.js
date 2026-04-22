@@ -13,6 +13,7 @@ const jwt      = require('jsonwebtoken');
 const Database = require('better-sqlite3');
 const cron     = require('node-cron');
 const nodemailer = require('nodemailer');
+const crypto   = require('crypto');
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -1127,6 +1128,347 @@ function scheduleMidnightUpdate() {
 }
 
 
+// ═════════════════════════════════════════════════════════
+// 빌링결제(정기결제) - 토스페이먼츠
+// 공식 가이드: https://docs.tosspayments.com/guides/billing/integration
+// ═════════════════════════════════════════════════════════
+const TOSS_API_HOST = 'api.tosspayments.com';
+const BILLING_PLAN_AMOUNTS = { basic: 9900, pro: 29900, team: 99000 };
+const BILLING_PLAN_NAMES   = { basic: '베이직', pro: '프로', team: '팀' };
+const BILLING_MAX_RETRY    = 3;
+const BILLING_RETRY_DAYS   = [3, 7]; // 1차 실패→+3일, 2차 실패→+7일, 3차 실패→canceled
+
+function tossAuthHeader() {
+  const sk = process.env.TOSS_SECRET_KEY || '';
+  return 'Basic ' + Buffer.from(sk + ':').toString('base64');
+}
+
+function tossRequest(method, pathUrl, body, extraHeaders = {}) {
+  return new Promise((resolve, reject) => {
+    const json = body ? JSON.stringify(body) : '';
+    const headers = {
+      'Authorization': tossAuthHeader(),
+      'Content-Type': 'application/json',
+      ...(json ? { 'Content-Length': Buffer.byteLength(json) } : {}),
+      ...extraHeaders,
+    };
+    const r2 = https.request({ hostname: TOSS_API_HOST, port: 443, path: pathUrl, method, headers }, (r) => {
+      let data = '';
+      r.on('data', (c) => data += c);
+      r.on('end', () => {
+        let parsed = null;
+        try { parsed = data ? JSON.parse(data) : null; } catch {}
+        resolve({ status: r.statusCode, body: parsed, raw: data });
+      });
+    });
+    r2.on('error', reject);
+    if (json) r2.write(json);
+    r2.end();
+  });
+}
+
+// ── billingKey 암호화 저장 (AES-256-GCM)
+function getBillingEncKey() {
+  const raw = process.env.TOSS_BILLING_ENC_KEY || process.env.JWT_SECRET || 'gongsainfra-billing-fallback-key';
+  return crypto.createHash('sha256').update(raw).digest(); // 32 bytes
+}
+function encryptBillingKey(plain) {
+  if (!plain) return '';
+  try {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', getBillingEncKey(), iv);
+    const enc = Buffer.concat([cipher.update(String(plain), 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return `v1:${iv.toString('hex')}:${tag.toString('hex')}:${enc.toString('hex')}`;
+  } catch (e) {
+    console.error('[encryptBillingKey]', e.message);
+    return '';
+  }
+}
+function decryptBillingKey(stored) {
+  if (!stored) return '';
+  if (!String(stored).startsWith('v1:')) return stored; // 레거시 평문 호환
+  try {
+    const [, ivHex, tagHex, encHex] = stored.split(':');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', getBillingEncKey(), Buffer.from(ivHex, 'hex'));
+    decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+    const dec = Buffer.concat([decipher.update(Buffer.from(encHex, 'hex')), decipher.final()]);
+    return dec.toString('utf8');
+  } catch (e) {
+    console.error('[decryptBillingKey]', e.message);
+    return '';
+  }
+}
+
+function maskCardNumber(num) {
+  const digits = String(num || '').replace(/[^0-9*]/g, '');
+  if (digits.length < 8) return digits;
+  return digits.slice(0, 4) + '-****-****-' + digits.slice(-4);
+}
+
+function calcNextChargeDate(from = new Date()) {
+  const d = new Date(from);
+  d.setDate(d.getDate() + 30);
+  return d.toISOString().slice(0, 10);
+}
+
+function getPlanAmount(tier) {
+  return BILLING_PLAN_AMOUNTS[String(tier || '').toLowerCase()] || 0;
+}
+
+function buildMailTransporter() {
+  if (!process.env.SMTP_HOST) return null;
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT) || 587,
+    secure: Number(process.env.SMTP_PORT) === 465,
+    auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
+  });
+}
+
+async function notifyBillingFailure(userId, tier, reason, finalCancel) {
+  try {
+    const user = db.prepare('SELECT email, name FROM users WHERE id=?').get(userId);
+    if (!user?.email) return;
+    const transporter = buildMailTransporter();
+    if (!transporter) return;
+    const subject = finalCancel
+      ? '[공사인프라] 구독이 해지되었습니다 (결제 3회 실패)'
+      : '[공사인프라] 정기결제 실패 - 카드 확인 요청';
+    const html = finalCancel
+      ? `<p>안녕하세요 ${user.name || ''}님,</p><p>${tier} 플랜 정기결제가 3회 연속 실패하여 구독이 해지되었습니다.</p><p>사유: ${reason}</p><p>결제수단을 변경 후 다시 구독해 주세요.</p>`
+      : `<p>안녕하세요 ${user.name || ''}님,</p><p>${tier} 플랜 정기결제가 실패했습니다.</p><p>사유: ${reason}</p><p>며칠 후 자동 재시도됩니다. 카드 한도/유효기간을 확인해주세요.</p>`;
+    await transporter.sendMail({
+      from: process.env.SMTP_FROM || 'noreply@gongsainfra.com',
+      to: user.email, subject, html,
+    });
+  } catch (e) {
+    console.error('[notifyBillingFailure]', e.message);
+  }
+}
+
+// 구독 1건 청구 (배치 + 수동 공용)
+async function chargeSubscription(sub) {
+  const billingKey = decryptBillingKey(sub.billing_key);
+  if (!billingKey) return { ok: false, error: 'billingKey 복호화 실패' };
+  const amount = getPlanAmount(sub.plan);
+  const orderId = `gri_${sub.user_id}_${sub.plan}_${Date.now()}`;
+
+  try {
+    const resp = await tossRequest('POST', `/v1/billing/${encodeURIComponent(billingKey)}`, {
+      customerKey: sub.customer_key,
+      amount,
+      orderId,
+      orderName: `공사인프라 ${BILLING_PLAN_NAMES[sub.plan]} (월간)`,
+    });
+
+    if (resp.status === 200) {
+      const now = new Date();
+      const nextCharge = calcNextChargeDate(now);
+      db.prepare(`
+        UPDATE subscriptions
+        SET status='active', last_charge_date=?, next_charge_date=?, retry_count=0,
+            expires_at=?, updated_at=datetime('now','localtime')
+        WHERE id=?
+      `).run(now.toISOString().slice(0, 10), nextCharge, nextCharge, sub.id);
+
+      db.prepare(`
+        INSERT INTO payment_history
+          (subscription_id, user_id, tier, amount, status, toss_payment_key, toss_order_id, raw_response)
+        VALUES (?, ?, ?, ?, 'success', ?, ?, ?)
+      `).run(sub.id, sub.user_id, sub.plan, amount, resp.body?.paymentKey || '', orderId, JSON.stringify(resp.body || {}));
+
+      db.prepare('UPDATE users SET plan=?, plan_until=? WHERE id=?').run(sub.plan, nextCharge, sub.user_id);
+      console.log(`[billing/charge] OK sub#${sub.id} user#${sub.user_id} ${amount}원`);
+      return { ok: true, paymentKey: resp.body?.paymentKey, nextChargeDate: nextCharge };
+    } else {
+      const msg = resp.body?.message || ('HTTP ' + resp.status);
+      const newRetry = (sub.retry_count || 0) + 1;
+
+      db.prepare(`
+        INSERT INTO payment_history
+          (subscription_id, user_id, tier, amount, status, toss_order_id, failure_reason, raw_response)
+        VALUES (?, ?, ?, ?, 'failed', ?, ?, ?)
+      `).run(sub.id, sub.user_id, sub.plan, amount, orderId, msg, JSON.stringify(resp.body || {}));
+
+      if (newRetry >= BILLING_MAX_RETRY) {
+        db.prepare(`
+          UPDATE subscriptions
+          SET status='canceled', retry_count=?, canceled_at=datetime('now','localtime'),
+              updated_at=datetime('now','localtime')
+          WHERE id=?
+        `).run(newRetry, sub.id);
+        db.prepare('UPDATE users SET plan=?, plan_until=NULL WHERE id=?').run('free', sub.user_id);
+        notifyBillingFailure(sub.user_id, sub.plan, msg, true).catch(() => {});
+        console.warn(`[billing/charge] 3회 실패 → canceled sub#${sub.id}`);
+        return { ok: false, error: msg, canceled: true };
+      } else {
+        const delayDays = BILLING_RETRY_DAYS[newRetry - 1] || 7;
+        const nextRetry = new Date();
+        nextRetry.setDate(nextRetry.getDate() + delayDays);
+        db.prepare(`
+          UPDATE subscriptions
+          SET status='past_due', retry_count=?, next_charge_date=?, updated_at=datetime('now','localtime')
+          WHERE id=?
+        `).run(newRetry, nextRetry.toISOString().slice(0, 10), sub.id);
+        notifyBillingFailure(sub.user_id, sub.plan, msg, false).catch(() => {});
+        console.warn(`[billing/charge] ${newRetry}차 실패 sub#${sub.id}, ${delayDays}일 후 재시도`);
+        return { ok: false, error: msg, retryCount: newRetry, nextRetryDate: nextRetry.toISOString().slice(0, 10) };
+      }
+    }
+  } catch (e) {
+    console.error('[chargeSubscription]', e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+// ═════════════════════════════════════════════════════════
+// POST /api/billing/issue-key
+// 프론트 requestBillingAuth 성공 후 authKey+customerKey로 billingKey 발급 + 최초 결제
+// ═════════════════════════════════════════════════════════
+app.post('/api/billing/issue-key', authRequired, async (req, res) => {
+  const { authKey, customerKey, tier } = req.body;
+  if (!authKey || !customerKey) return res.status(400).json({ error: 'authKey, customerKey 필수' });
+  if (!BILLING_PLAN_AMOUNTS[tier]) return res.status(400).json({ error: '요금제가 올바르지 않습니다.' });
+  if (!process.env.TOSS_SECRET_KEY) return res.status(500).json({ error: '결제 설정 누락 (TOSS_SECRET_KEY)' });
+
+  try {
+    // 1) billingKey 발급
+    const resp = await tossRequest('POST', '/v1/billing/authorizations/issue', { authKey, customerKey });
+    if (resp.status !== 200) {
+      const msg = resp.body?.message || resp.body?.code || '빌링키 발급 실패';
+      console.warn('[billing/issue-key] toss:', resp.status, msg);
+      return res.status(400).json({ error: msg });
+    }
+    const { billingKey, card } = resp.body || {};
+    if (!billingKey) return res.status(500).json({ error: '빌링키가 응답에 없습니다.' });
+
+    const encBillingKey = encryptBillingKey(billingKey);
+    const cardCompany   = card?.company || card?.issuerCode || '';
+    const cardMasked    = maskCardNumber(card?.number || '');
+    const amount        = getPlanAmount(tier);
+
+    // 2) 최초 결제 (첫 달 청구)
+    const firstOrderId = `gri_${req.user.id}_${tier}_${Date.now()}`;
+    const chargeResp = await tossRequest('POST', `/v1/billing/${encodeURIComponent(billingKey)}`, {
+      customerKey, amount,
+      orderId: firstOrderId,
+      orderName: `공사인프라 ${BILLING_PLAN_NAMES[tier]} (월간)`,
+    });
+
+    if (chargeResp.status !== 200) {
+      const msg = chargeResp.body?.message || '최초 결제 실패';
+      console.warn('[billing/issue-key] 최초 결제 실패:', chargeResp.status, msg);
+      return res.status(400).json({ error: msg });
+    }
+
+    const now = new Date();
+    const nextCharge = calcNextChargeDate(now);
+
+    // 기존 active 구독 replaced 처리 (중복 방지)
+    db.prepare(`UPDATE subscriptions SET status='replaced', updated_at=datetime('now','localtime') WHERE user_id=? AND status IN ('active','past_due')`)
+      .run(req.user.id);
+
+    const info = db.prepare(`
+      INSERT INTO subscriptions
+        (user_id, plan, status, payment_key, order_id, amount,
+         billing_key, customer_key, card_company, card_number_masked,
+         next_charge_date, last_charge_date, retry_count, canceled_at,
+         started_at, expires_at, updated_at)
+      VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL,
+              datetime('now','localtime'), ?, datetime('now','localtime'))
+    `).run(
+      req.user.id, tier,
+      chargeResp.body?.paymentKey || '',
+      firstOrderId, amount,
+      encBillingKey, customerKey, cardCompany, cardMasked,
+      nextCharge, now.toISOString().slice(0, 10),
+      nextCharge
+    );
+    const subscriptionId = info.lastInsertRowid;
+
+    db.prepare(`
+      INSERT INTO payment_history
+        (subscription_id, user_id, tier, amount, status, toss_payment_key, toss_order_id, raw_response)
+      VALUES (?, ?, ?, ?, 'success', ?, ?, ?)
+    `).run(subscriptionId, req.user.id, tier, amount, chargeResp.body?.paymentKey || '', firstOrderId, JSON.stringify(chargeResp.body || {}));
+
+    db.prepare('UPDATE users SET plan=?, plan_until=? WHERE id=?').run(tier, nextCharge, req.user.id);
+
+    if (tier === 'team') {
+      const existing = db.prepare('SELECT id FROM teams WHERE owner_id=?').get(req.user.id);
+      if (!existing) db.prepare('INSERT INTO teams (owner_id, name) VALUES (?, ?)').run(req.user.id, '내 팀');
+    }
+
+    const user = db.prepare('SELECT id,email,name,company,plan,plan_until,role FROM users WHERE id=?').get(req.user.id);
+    const newToken = jwt.sign({ id: user.id, email: user.email, plan: user.plan, role: user.role || 'member' }, JWT_SECRET, { expiresIn: '30d' });
+
+    res.json({
+      ok: true, token: newToken, user,
+      subscription: {
+        id: subscriptionId, tier, status: 'active', amount,
+        cardCompany, cardNumberMasked: cardMasked,
+        nextChargeDate: nextCharge,
+        lastChargeDate: now.toISOString().slice(0, 10),
+      },
+    });
+  } catch (e) {
+    console.error('[billing/issue-key]', e.message);
+    res.status(500).json({ error: '빌링키 처리 오류: ' + e.message });
+  }
+});
+
+// POST /api/billing/charge - 수동 청구 (관리자 전용, 테스트용)
+app.post('/api/billing/charge', authRequired, async (req, res) => {
+  const me = db.prepare('SELECT role FROM users WHERE id=?').get(req.user.id);
+  if (me?.role !== 'admin') return res.status(403).json({ error: '관리자만 사용 가능' });
+  const { subscriptionId } = req.body;
+  if (!subscriptionId) return res.status(400).json({ error: 'subscriptionId 필수' });
+  const sub = db.prepare('SELECT * FROM subscriptions WHERE id=?').get(subscriptionId);
+  if (!sub) return res.status(404).json({ error: '구독을 찾을 수 없습니다.' });
+  if (sub.status !== 'active' && sub.status !== 'past_due') return res.status(400).json({ error: '활성 구독이 아닙니다.' });
+  const result = await chargeSubscription(sub);
+  res.json(result);
+});
+
+// GET /api/billing/status - 내 구독 상태
+app.get('/api/billing/status', authRequired, (req, res) => {
+  const sub = db.prepare(`
+    SELECT id, plan AS tier, status, amount, card_company, card_number_masked,
+           next_charge_date, last_charge_date, retry_count, canceled_at,
+           started_at, expires_at
+    FROM subscriptions
+    WHERE user_id=? AND billing_key IS NOT NULL AND billing_key != ''
+    ORDER BY started_at DESC LIMIT 1
+  `).get(req.user.id);
+  if (!sub) return res.json({ subscription: null, history: [] });
+  const history = db.prepare(`
+    SELECT id, tier, amount, status, charged_at, failure_reason, toss_payment_key
+    FROM payment_history WHERE subscription_id=? ORDER BY charged_at DESC LIMIT 12
+  `).all(sub.id);
+  res.json({ subscription: sub, history });
+});
+
+// POST /api/billing/cancel - 구독 해지 (billingKey는 보관, status만 canceled)
+app.post('/api/billing/cancel', authRequired, (req, res) => {
+  const sub = db.prepare(`
+    SELECT * FROM subscriptions
+    WHERE user_id=? AND status IN ('active','past_due') AND billing_key IS NOT NULL
+    ORDER BY started_at DESC LIMIT 1
+  `).get(req.user.id);
+  if (!sub) return res.status(404).json({ error: '활성 구독이 없습니다.' });
+  db.prepare(`
+    UPDATE subscriptions SET status='canceled', canceled_at=datetime('now','localtime'), updated_at=datetime('now','localtime')
+    WHERE id=?
+  `).run(sub.id);
+  // plan_until 유지 → 현재 결제 주기 남은 기간 이용 가능
+  res.json({
+    ok: true,
+    message: `구독이 해지되었습니다. ${sub.expires_at || '다음 결제일'}까지 이용 가능합니다.`,
+    expiresAt: sub.expires_at,
+  });
+});
+
 // ══ 결제 처리 API (토스페이먼츠)
 app.post('/api/payment/confirm', authRequired, async (req, res) => {
   const { paymentKey, orderId, amount, plan } = req.body;
@@ -1232,6 +1574,34 @@ app.get('/payment/fail', (req, res) => {
   const redirectTo = frontendUrl || '/';
   res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>결제 실패</title>
   <script>window.location.href = ${JSON.stringify(redirectTo)};</script></head><body>결제가 취소되었습니다.</body></html>`);
+});
+
+// 빌링결제(정기결제) 리다이렉트 핸들러
+app.get('/billing/success', (req, res) => {
+  const tier = String(req.query.tier || '').replace(/[^a-z]/g, '');
+  const authKey = String(req.query.authKey || '').slice(0, 300);
+  const customerKey = String(req.query.customerKey || '').slice(0, 300);
+  const safeData = JSON.stringify({ tier, authKey, customerKey });
+  const frontendUrl = (process.env.FRONTEND_URL || '').replace(/['"<>]/g, '');
+  const redirectTo = frontendUrl || '/';
+  res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>카드 등록 완료</title>
+  <script>
+    localStorage.setItem('pendingBilling', ${JSON.stringify(safeData)});
+    window.location.href = ${JSON.stringify(redirectTo)};
+  </script></head><body>빌링키 발급 처리 중...</body></html>`);
+});
+
+app.get('/billing/fail', (req, res) => {
+  const code = String(req.query.code || '').slice(0, 40);
+  const message = String(req.query.message || '').slice(0, 200);
+  const safeData = JSON.stringify({ code, message });
+  const frontendUrl = (process.env.FRONTEND_URL || '').replace(/['"<>]/g, '');
+  const redirectTo = frontendUrl || '/';
+  res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>카드 등록 실패</title>
+  <script>
+    localStorage.setItem('billingError', ${JSON.stringify(safeData)});
+    window.location.href = ${JSON.stringify(redirectTo)};
+  </script></head><body>카드 등록이 취소되었습니다.</body></html>`);
 });
 
 // ══ 엑셀(CSV) 다운로드 API (PRO 이상)

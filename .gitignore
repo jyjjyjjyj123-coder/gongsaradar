@@ -5,6 +5,8 @@ node_modules/
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite3
 cache_sites.json
 gongsaradar.db
 .claude/

@@ -1469,6 +1469,98 @@ app.post('/api/billing/cancel', authRequired, (req, res) => {
   });
 });
 
+// ═════════════════════════════════════════════════════════
+// POST /api/webhook/toss
+// 토스 결제 상태 변경 웹훅 수신 (멱등성 처리 + 선택적 서명 검증)
+// ═════════════════════════════════════════════════════════
+app.post('/api/webhook/toss', async (req, res) => {
+  const event = req.body || {};
+  const eventType = event.eventType || event.event_type || 'UNKNOWN';
+  const eventId =
+    req.headers['x-toss-event-id']
+    || event.eventId
+    || (event.data?.paymentKey ? `pk_${event.data.paymentKey}_${event.createdAt || ''}` : null);
+
+  // 선택적 HMAC 서명 검증 (TOSS_WEBHOOK_SECRET 있을 때만)
+  if (process.env.TOSS_WEBHOOK_SECRET && req.headers['x-toss-signature']) {
+    try {
+      const expected = crypto.createHmac('sha256', process.env.TOSS_WEBHOOK_SECRET)
+        .update(JSON.stringify(req.body)).digest('hex');
+      const got = String(req.headers['x-toss-signature']);
+      if (got !== expected) {
+        console.warn('[webhook/toss] 서명 불일치 — 기록만 남기고 진행');
+      }
+    } catch {}
+  }
+
+  // 멱등성: 동일 event_id 중복 수신 차단
+  if (eventId) {
+    const dup = db.prepare('SELECT id FROM webhook_events WHERE event_id=?').get(eventId);
+    if (dup) {
+      console.log('[webhook/toss] 중복 이벤트 무시:', eventId);
+      return res.status(200).json({ ok: true, duplicate: true });
+    }
+    try {
+      db.prepare('INSERT INTO webhook_events (event_id, event_type, payload) VALUES (?, ?, ?)')
+        .run(eventId, eventType, JSON.stringify(event));
+    } catch (e) { console.warn('[webhook/toss] 이벤트 저장 실패:', e.message); }
+  } else {
+    db.prepare('INSERT INTO webhook_events (event_type, payload) VALUES (?, ?)')
+      .run(eventType, JSON.stringify(event));
+  }
+
+  // 이벤트별 처리
+  try {
+    const data = event.data || event;
+    if (eventType === 'PAYMENT_STATUS_CHANGED' || eventType === 'CANCEL_STATUS_CHANGED') {
+      const orderId = data.orderId;
+      const status  = data.status;
+      if (orderId) {
+        if (status === 'CANCELED' || status === 'PARTIAL_CANCELED') {
+          db.prepare(`UPDATE payment_history SET status='refunded', raw_response=? WHERE toss_order_id=?`)
+            .run(JSON.stringify(data), orderId);
+        } else if (status === 'ABORTED' || status === 'EXPIRED' || status === 'FAILED') {
+          db.prepare(`UPDATE payment_history SET status='failed', failure_reason=?, raw_response=? WHERE toss_order_id=?`)
+            .run(data.failure?.message || status, JSON.stringify(data), orderId);
+        }
+      }
+    }
+    if (eventId) db.prepare('UPDATE webhook_events SET processed=1 WHERE event_id=?').run(eventId);
+  } catch (e) {
+    console.error('[webhook/toss] 처리 오류:', e.message);
+  }
+
+  // 토스는 10초 내 200 응답을 요구
+  res.status(200).json({ ok: true });
+});
+
+// ═════════════════════════════════════════════════════════
+// 정기결제 배치 (매일 03:00 KST)
+// next_charge_date <= 오늘 인 active/past_due 구독을 청구
+// ═════════════════════════════════════════════════════════
+cron.schedule('0 3 * * *', async () => {
+  if (!process.env.TOSS_SECRET_KEY) {
+    console.warn('[billing/cron] TOSS_SECRET_KEY 없음 - 배치 스킵');
+    return;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  console.log(`[billing/cron] ${today} 정기결제 배치 시작`);
+  const targets = db.prepare(`
+    SELECT * FROM subscriptions
+    WHERE status IN ('active','past_due')
+      AND billing_key IS NOT NULL AND billing_key != ''
+      AND next_charge_date IS NOT NULL AND next_charge_date <= ?
+  `).all(today);
+  console.log(`[billing/cron] 대상 ${targets.length}건`);
+  let ok = 0, fail = 0;
+  for (const sub of targets) {
+    const r = await chargeSubscription(sub);
+    if (r.ok) ok++; else fail++;
+    await new Promise((r2) => setTimeout(r2, 200)); // rate-limit 보호
+  }
+  console.log(`[billing/cron] 완료 성공:${ok} 실패:${fail}`);
+}, { timezone: 'Asia/Seoul' });
+
 // ══ 결제 처리 API (토스페이먼츠)
 app.post('/api/payment/confirm', authRequired, async (req, res) => {
   const { paymentKey, orderId, amount, plan } = req.body;

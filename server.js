@@ -170,7 +170,58 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_contractor_name ON contractor_cache(name);
   CREATE INDEX IF NOT EXISTS idx_contractor_reports_site ON contractor_reports(construction_id);
+
+  CREATE TABLE IF NOT EXISTS payment_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subscription_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    tier TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    toss_payment_key TEXT,
+    toss_order_id TEXT,
+    charged_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    failure_reason TEXT,
+    raw_response TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_payment_history_sub ON payment_history(subscription_id);
+  CREATE INDEX IF NOT EXISTS idx_payment_history_user ON payment_history(user_id);
+
+  CREATE TABLE IF NOT EXISTS webhook_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT UNIQUE,
+    event_type TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    received_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    processed INTEGER NOT NULL DEFAULT 0
+  );
 `);
+
+// ── subscriptions 테이블 빌링결제 컬럼 마이그레이션
+// ALTER TABLE은 IF NOT EXISTS 미지원 → 각 컬럼마다 try/catch
+function addColumnIfMissing(table, column, definition) {
+  try {
+    db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+    console.log(`[migration] ${table}.${column} 컬럼 추가`);
+  } catch (e) {
+    if (!/duplicate column name/i.test(e.message)) {
+      console.warn(`[migration] ${table}.${column} 실패:`, e.message);
+    }
+  }
+}
+addColumnIfMissing('subscriptions', 'billing_key',      'TEXT');         // 암호화 저장
+addColumnIfMissing('subscriptions', 'customer_key',     'TEXT');
+addColumnIfMissing('subscriptions', 'card_company',     `TEXT DEFAULT ''`);
+addColumnIfMissing('subscriptions', 'card_number_masked', `TEXT DEFAULT ''`);
+addColumnIfMissing('subscriptions', 'next_charge_date', 'TEXT');         // YYYY-MM-DD
+addColumnIfMissing('subscriptions', 'last_charge_date', 'TEXT');
+addColumnIfMissing('subscriptions', 'retry_count',      'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('subscriptions', 'canceled_at',      'TEXT');
+addColumnIfMissing('subscriptions', 'updated_at',       "TEXT NOT NULL DEFAULT (datetime('now','localtime'))");
+
+// billing 조회용 인덱스
+try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_subs_user_status ON subscriptions(user_id, status)`).run(); } catch {}
+try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_subs_next_charge ON subscriptions(next_charge_date, status)`).run(); } catch {}
 
 // 관리자 계정 자동 생성 (환경변수 설정 시에만)
 if (ADMIN_EMAIL && ADMIN_PW) {

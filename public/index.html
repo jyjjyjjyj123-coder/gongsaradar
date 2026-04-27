@@ -606,7 +606,16 @@ function startTrial() {
   document.getElementById('download').scrollIntoView({ behavior: 'smooth' });
 }
 
-// ─── Payment (토스페이먼츠) ───
+// ─── Payment (토스페이먼츠 빌링/자동결제) ───
+const TOSS_CLIENT_KEY = 'test_ck_0RnYX2w532MqDN1BANAN8NeyqApQ';
+
+function genCustomerKey(seed) {
+  const cleaned = String(seed || 'guest').replace(/[^A-Za-z0-9]/g, '').slice(0, 20) || 'guest';
+  const t = Date.now().toString(36);
+  const r = Math.random().toString(36).slice(2, 10);
+  return cleaned + '_' + t + r;
+}
+
 async function startPayment(planId) {
   // 비로그인 시 로그인 요구
   if (!isLoggedIn()) {
@@ -616,9 +625,7 @@ async function startPayment(planId) {
     return;
   }
   const PRICES = { basic: 9900, pro: 29900, team: 99000 };
-  const NAMES = { basic: '베이직', pro: '프로', team: '팀' };
-  const price = PRICES[planId];
-  if (!price) return;
+  if (!PRICES[planId]) return;
   try {
     if (!window.TossPayments) {
       const sc = document.createElement('script');
@@ -626,21 +633,54 @@ async function startPayment(planId) {
       document.head.appendChild(sc);
       await new Promise((ok, fail) => { sc.onload = ok; sc.onerror = fail; });
     }
-    const clientKey = '46w9ps99zph';
-    const toss = TossPayments(clientKey);
-    const orderId = 'gongsainfra_' + planId + '_' + Date.now();
-    await toss.requestPayment('카드', {
-      amount: price,
-      orderId,
-      orderName: '공사인프라 ' + NAMES[planId] + ' (월간)',
-      customerName: currentUser?.email || '사용자',
-      successUrl: LOCAL_SERVER + '/payment/success?plan=' + planId,
-      failUrl: LOCAL_SERVER + '/payment/fail',
+    const toss = TossPayments(TOSS_CLIENT_KEY);
+    const customerKey = genCustomerKey(currentUser?.email || currentUser?.id);
+    localStorage.setItem('pendingTier', planId);
+    localStorage.setItem('pendingCustomerKey', customerKey);
+    const origin = window.location.origin;
+    // 공식 가이드: toss.requestBillingAuth('카드', { customerKey, successUrl, failUrl })
+    await toss.requestBillingAuth('카드', {
+      customerKey,
+      successUrl: origin + '/billing/success?tier=' + planId,
+      failUrl: origin + '/billing/fail',
     });
   } catch (e) {
     if (e?.code !== 'USER_CANCEL') showToast('결제 오류: ' + (e?.message || ''));
   }
 }
+
+// 빌링 success 리다이렉트 후 authKey + customerKey → billingKey 발급 처리
+(async function processPendingBilling() {
+  try {
+    const errRaw = localStorage.getItem('billingError');
+    if (errRaw) {
+      localStorage.removeItem('billingError');
+      try {
+        const { code, message } = JSON.parse(errRaw);
+        if (code !== 'USER_CANCEL' && message) showToast('카드 등록 실패: ' + message);
+      } catch {}
+    }
+    const raw = localStorage.getItem('pendingBilling');
+    if (!raw) return;
+    localStorage.removeItem('pendingBilling');
+    const { tier, authKey, customerKey } = JSON.parse(raw);
+    if (!authKey || !customerKey || !tier) return;
+    if (!authToken) { showToast('로그인이 필요합니다.'); return; }
+    showToast('결제 처리 중...');
+    const res = await fetch(LOCAL_SERVER + '/api/billing/issue-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
+      body: JSON.stringify({ authKey, customerKey, tier }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.ok === false) throw new Error(data.error || '빌링키 발급 실패');
+    if (data.token) { authToken = data.token; localStorage.setItem('gongsainfra_token', authToken); parseToken(); }
+    const sub = data.subscription || {};
+    showToast('결제 완료! ' + (sub.cardCompany ? sub.cardCompany + ' ' : '') + (sub.cardNumberMasked || '카드') + ' 등록');
+  } catch (e) {
+    showToast('결제 처리 오류: ' + (e?.message || ''));
+  }
+})();
 
 // ─── Auth overlay backdrop close ───
 document.getElementById('auth-overlay').addEventListener('click', function(e) {

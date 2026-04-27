@@ -49,6 +49,10 @@ img{max-width:100%;display:block}
 .nav-links a:hover{color:var(--accent)}
 .nav-cta{padding:8px 18px;border-radius:8px;background:var(--accent);color:#fff!important;font-size:13px;font-weight:700;transition:background .2s}
 .nav-cta:hover{background:var(--accent-dark)}
+.nav-cta-area{display:flex;align-items:center;gap:10px}
+.nav-user{font-size:13px;font-weight:600;color:var(--text2);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nav-logout{padding:8px 14px;border-radius:8px;background:var(--surface2);color:var(--text2);font-size:13px;font-weight:700;border:1px solid var(--border);cursor:pointer;transition:all .2s;font-family:inherit}
+.nav-logout:hover{border-color:var(--red);color:var(--red)}
 
 /* ── HERO ── */
 .hero{padding:140px 24px 80px;text-align:center;background:linear-gradient(180deg,#EEF2FF 0%,var(--bg) 100%)}
@@ -206,7 +210,9 @@ img{max-width:100%;display:block}
       <a href="#features" onclick="closeMenu()">주요 기능</a>
       <a href="#pricing" onclick="closeMenu()">요금제</a>
       <a href="#download" onclick="closeMenu()">다운로드</a>
-      <a href="#pricing" class="nav-cta" onclick="closeMenu()">시작하기</a>
+      <div id="nav-cta-area" class="nav-cta-area">
+        <a href="#pricing" class="nav-cta" onclick="closeMenu()">시작하기</a>
+      </div>
     </div>
   </div>
 </nav>
@@ -517,6 +523,49 @@ function parseToken() {
   } catch {}
 }
 
+// ─── Auth header (로그인/로그아웃 분기) ───
+function updateAuthHeader() {
+  const area = document.getElementById('nav-cta-area');
+  if (!area) return;
+  while (area.firstChild) area.removeChild(area.firstChild);
+  if (isLoggedIn()) {
+    const email = (currentUser && currentUser.email) ? String(currentUser.email) : '';
+    if (email) {
+      const u = document.createElement('span');
+      u.className = 'nav-user';
+      u.textContent = email; // textContent → XSS 안전
+      area.appendChild(u);
+    }
+    const btn = document.createElement('button');
+    btn.className = 'nav-logout';
+    btn.type = 'button';
+    btn.textContent = '로그아웃';
+    btn.onclick = doLogout;
+    area.appendChild(btn);
+  } else {
+    const a = document.createElement('a');
+    a.href = '#pricing';
+    a.className = 'nav-cta';
+    a.textContent = '시작하기';
+    a.onclick = closeMenu;
+    area.appendChild(a);
+  }
+}
+
+function doLogout() {
+  authToken = '';
+  currentUser = null;
+  try {
+    localStorage.removeItem('gongsainfra_token');
+    localStorage.removeItem('pendingBilling');
+    localStorage.removeItem('billingError');
+    localStorage.removeItem('pendingTier');
+    localStorage.removeItem('pendingCustomerKey');
+  } catch {}
+  updateAuthHeader();
+  showToast('로그아웃되었습니다.');
+}
+
 // ─── Auth Modal ───
 function showAuth(mode) {
   authMode = mode || 'login';
@@ -553,6 +602,7 @@ async function doLogin() {
     authToken = data.token;
     localStorage.setItem('gongsainfra_token', authToken);
     parseToken();
+    updateAuthHeader();
     closeAuth();
     document.getElementById('trial-overlay').classList.remove('open');
     showToast('로그인 성공!');
@@ -580,6 +630,7 @@ async function doRegister() {
     authToken = data.token;
     localStorage.setItem('gongsainfra_token', authToken);
     parseToken();
+    updateAuthHeader();
     closeAuth();
     document.getElementById('trial-overlay').classList.remove('open');
     pendingPricing = false;
@@ -649,6 +700,9 @@ async function startPayment(planId) {
     if (e?.code !== 'USER_CANCEL') showToast('결제 오류: ' + (e?.message || ''));
   }
 }
+
+// 페이지 로드 시 인증 헤더 갱신 (로그인/로그아웃 상태 반영)
+updateAuthHeader();
 
 // 빌링 success 리다이렉트 후 authKey + customerKey → billingKey 발급 처리
 (async function processPendingBilling() {
